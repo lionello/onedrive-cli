@@ -2,12 +2,13 @@
 Cross-platform command line interface for OneDrive (Personal)
 
 ## Installation
-* `git clone https://github.com/enumatech/onedrive-cli.git`
-* `cd onedrive-cli`
-* `npm install`
-* `ln -s $(realpath bin/onedrive) ~/bin/onedrive`
-* `onedrive login`
-
+```
+$ git clone https://github.com/enumatech/onedrive-cli.git
+$ cd onedrive-cli
+$ npm install
+$ ln -s $(realpath bin/onedrive) ~/bin/onedrive
+$ onedrive login
+```
 ## Usage
 `usage: onedrive COMMAND [arguments]`
 
