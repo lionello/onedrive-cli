@@ -1,8 +1,7 @@
 # onedrive-cli
-Command line interface for OneDrive
+Cross-platform command line interface for OneDrive (Personal)
 
 ## Installation
-
 * `git clone https://github.com/enumatech/onedrive-cli.git`
 * `cd onedrive-cli`
 * `npm install`
@@ -10,6 +9,7 @@ Command line interface for OneDrive
 * `onedrive login`
 
 ## Usage
+`usage: onedrive COMMAND [arguments]`
 
 This little utility supports the following commands:
 * `cat` - dumps the contents of a file to stdout
@@ -22,9 +22,7 @@ This little utility supports the following commands:
 * `rm` - delete a file from OneDrive (not implemented)
 * `wget` - copy a remote URL to OneDrive (server side)
 
-
 ## Examples
-
 ##### List the contents of the Public folder
 `onedrive ls Public`
 
@@ -32,13 +30,12 @@ This little utility supports the following commands:
 `onedrive cat Documents/passwords | grep boa`
 
 ##### Let OneDrive upload a file server side
-`onedrive http://mega.com/somehugepublicfile Documents/somehugepublicfile`
+`onedrive wget http://mega.com/somehugepublicfile Documents/somehugepublicfile`
 
 ##### Upload files recursively
 `find * -type f -print0 | xargs -0 -n1 -I{} onedrive cp "./{}" "Shared Favorites/{}"`
 
 ## FAQ
-
 ##### Access token was not found; 'login' first.
 The `onedrive` utility needs an access token in order to read/write to your OneDrive storage.
 Use the`onedrive login` command to get the address of the Microsoft login page. After login,
@@ -60,3 +57,9 @@ The target file name cannot be determined from the source path. Specify a target
 The `cp` command supports both local->remote as well as remote->local copy.
 To make it clear which path is remote and which is local, either use `./` as a prefix for 
 the local path, or use `:/` as a prefix for the remote path. Either one will suffice.
+
+## TODO
+* Implement `rm`
+* Implement `mv`
+* Fix OAuth redirect on Safari
+* Register with NPM
