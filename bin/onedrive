@@ -1,0 +1,412 @@
+#!/usr/bin/env node
+
+const RP     = require('request-promise-native')
+const Colors = require('colors')
+const Moment = require('moment')
+const FS     = require('fs')
+const Mime   = require('mime')
+const Path   = require('path')
+const Url    = require('url')
+
+const TOKEN_FILE = Path.join(require('os').homedir(),'.onedrive-cli-token')
+
+
+function padLeft(str, len) {
+    return String('                '+str).slice(-len)
+}
+
+
+function padRight(str, len) {
+    return str + ' '.repeat(len - str.length)
+}
+
+
+function readFile(filename) {
+    return new Promise( (resolve,reject) => {
+        FS.readFile(filename, (err,data) => err?reject(err):resolve(data) )
+    })
+}
+
+
+function writeFile(filename, data) {
+    return new Promise( (resolve,reject) => {
+        FS.writeFile(filename, data, (err) => err?reject(err):resolve() )
+    })
+}
+
+
+function print(data) {
+    return new Promise( (resolve,reject) => {
+        process.stdout.write(data, err => err?reject(err):resolve() )
+    })
+}
+
+
+function humanize(num) {
+    const units = ["", "Ki", "Mi", "Gi", "Ti", "Pi"]
+    var str, unit = "", div = 0
+    for(;;) {
+        var str = Math.round(num / Math.pow(1024, div))
+        if (str <= 9999) {
+            return str + units[div]
+        }
+        ++div
+    }
+}
+
+
+function pp(num) { return padLeft(humanize(num), 6) }
+
+
+var lazyToken = readFile(TOKEN_FILE)
+                .then(buffer => {
+                    return lazyToken = Promise.resolve(buffer.toString())
+                })
+                .catch(err => {
+                    console.error(Colors.red(err))
+                    throw new Error("Access token was not found; 'login' first.")
+                })
+
+
+function call(url, method, body, mime) {
+    console.error(Colors.yellow(url))
+    var prefer
+    if (typeof body === 'object' && !(body instanceof Buffer)) {
+        if ("@content.sourceUrl" in body) {
+            prefer = 'respond-async'
+        }
+        body = JSON.stringify(body)
+        mime = 'application/json'
+    }
+    return lazyToken
+        .then(token => RP({
+            baseUrl: 'https://api.onedrive.com/v1.0/',
+            uri: url,
+            body: body,
+            method: method || 'GET',
+            headers: {
+                Authorization: 'bearer '+token,
+                'Content-Type': mime || 'application/octet-stream',
+                Prefer: prefer
+            }
+        }) )
+        .then(data => {
+            return data === '' ? {} : JSON.parse(data)
+        })
+}
+
+
+function getContent(url, method, body) {
+    console.error(Colors.yellow(url))
+    return lazyToken
+        .then(token => RP({
+            baseUrl: 'https://api.onedrive.com/v1.0/',
+            uri: url,
+            headers: {
+                Authorization: 'bearer '+token
+            }
+        }) )
+}
+
+
+function sanitize(remote) {
+    remote = remote.replace(/^:?\/?/, ":/")
+    return remote === ':/.' ? ':/' : remote
+}
+
+
+/*
+Filesystem         Size   Used  Avail Capacity Deleted
+dc1e3335a482dc20 1214Gi  164Gi 1050Gi      14%   780Mi
+*/
+function df() {
+    return call('/drives')
+        .then(result => {
+            console.log(Colors.bold('Drive              Size   Used  Avail Capacity Deleted Status'))
+            for(var i in result.value) {
+                const drive = result.value[i]
+                const capacity = Math.round(drive.quota.used*100 / drive.quota.total)+'% '
+                console.log(
+                    padRight(drive.id,16),
+                    pp(drive.quota.total),
+                    pp(drive.quota.used),
+                    pp(drive.quota.remaining),
+                    padLeft(capacity,9),
+                    pp(drive.quota.deleted),
+                    drive.status.state)
+            }
+            return ""
+        })
+}
+
+
+
+function listPage(total, cont) {
+    if (typeof cont === 'undefined') {
+        return total
+    }
+
+    return call(cont)
+        .then(result => {
+            const now = Moment()
+            const threshold = 1000*60*60*24*180//180days
+            for(var i in result.value) {
+                const f = result.value[i]
+                const m = Moment(f.lastModifiedDateTime)
+                const d = "folder" in f
+                var mod = d ? 'drwx' : '-rw-'
+                if ("shared" in f) {
+                    if ("effectiveRoles" in f.shared && f.shared.effectiveRoles.length === 1
+                        && f.shared.effectiveRoles[0] === 'read') {
+                        mod += d ? 'r-x' : 'r--'
+                        if (f.shared.scope === 'anonymous') {
+                            mod += d ? 'r-x' : 'r--'
+                        }
+                        else {
+                            mod += '---'
+                        }
+                    }
+                    else {
+                        mod += d ? 'rwx' : 'rw-'
+                        if (f.shared.scope === 'anonymous') {
+                            mod += d ? 'rwx' : 'rw-'
+                        }
+                        else {
+                            mod += '---'
+                        }
+                    }
+                }
+                else {
+                    mod += '------'
+                }
+                const count = d ? f.folder.childCount : 1
+                total += count
+                console.log(
+                    mod,
+                    padLeft(count,3),
+                    f.createdBy.user.displayName,
+                    padLeft(f.size,9),
+                    m.format(Math.abs(now-m)<threshold ? 'MMM DD HH:mm' : 'MMM DD  YYYY'),
+                    d ? Colors.blue(f.name) : f.name)
+            }
+            return listPage(total, result['@odata.nextLink'])
+        })
+}
+
+
+function ls(folder) {
+    if (typeof folder === 'undefined') {
+        folder = ''
+    }
+
+    //console.log(Colors.bold('Drive              Size   Used  Avail Capacity Deleted Status'))
+    return listPage(0, '/drive/root:/'+folder+':/children')
+        .then(result => "total "+result)
+}
+
+
+
+/*
+PUT /drive/root:/{parent-path}/{filename}:/content
+@name.conflictBehavior   fail, replace (def), or rename.
+*/
+function upload(from, to) {
+    if (from.endsWith('/')) {
+        throw new Error("Invalid source name")
+    }
+    if (to.endsWith('/')) {
+        to = to + Path.basename(from)
+    }
+    to = sanitize(to)
+    const mime = Mime.lookup(from)
+    return readFile(from)
+        .then(data => call('/drive/root'+to+':/content?@name.conflictBehavior=fail', 'PUT', data, mime) )
+        .then(result => {
+            console.log(from, '->', to)
+        })
+}
+
+
+/*
+POST /drive/items/{parent-item}/children
+Content-Type: application/json
+Prefer: respond-async
+
+{
+  "@content.sourceUrl": "http://wscont2.apps.microsoft.com/winstore/1x/e33e38d9-d138-42a1-b252-27da1924ca87/Screenshot.225037.100000.jpg",
+  "name": "halo-screenshot.jpg",
+  "file": { }
+}
+*/
+function wget(args) {
+    if (args.length < 2) {
+        throw new Error("usage: wget url target")
+    }
+    var to = args.pop()
+    const from = args[0].startsWith('http') ? args[0] : "http://" + args[0]
+    const data = {
+        "@content.sourceUrl": from,
+        name: Path.basename(to),
+        file: { }
+    }
+    if (data.name === '' || to.endsWith('/')) {
+        throw new Error("Invalid target name")
+    }
+    var path = Path.dirname(to+"hack")
+    to = sanitize(to)
+    path = sanitize(path)
+    return call('/drive/root'+path+':/children', 'POST', data)
+        .then(result => {
+            console.log(from, '=>', to)
+        })
+}
+
+
+/*
+GET /drive/root:/{path and filename}:/content
+*/
+function download(from, to) {
+    if (from.endsWith('/')) {
+        throw new Error("Invalid source name")
+    }
+    if (typeof to === 'undefined' || to === '.' || to === '') {
+        to = './'
+    }
+    if (to.endsWith('/')) {
+        to = to + Path.basename(from)
+    }
+    from = sanitize(from)
+    return getContent('/drive/root'+from+':/content')
+        .then(data => writeFile(to, data))
+        .then(result => {
+            console.log(from, '->', to)
+        })
+}
+
+
+function cp(args) {
+    if (args.length < 2) {
+        throw new Error("usage: cp source target")
+    }
+    const to = args.pop()
+
+    if (args[0].startsWith(':/') && to.startsWith(':/')) {
+        throw new Error("Remote copy is not implemented.")
+    }
+    else if (args[0].startsWith('./') && to.startsWith('./')) {
+        throw new Error("Local copy is not implemented.")
+    }
+    else if (args[0].startsWith('./') || to.startsWith(':/')) {
+        // from local to onedrive
+        return args.reduce( (prevp,cur) => prevp.then(_ => upload(cur, to)), Promise.resolve(0))
+    }
+    else if (args[0].startsWith(':/') || to.startsWith('./') || to === '.') {
+        // from onedrive to local
+        return args.reduce( (prevp,cur) => prevp.then(_ => download(cur, to)), Promise.resolve(0))
+    }
+    else {
+        throw new Error('Use ./ or :/ path prefix for local or remote paths.')
+    }
+}
+
+
+function rm(args) {
+    if (args.length < 1) {
+        throw new Error("usage: rm file")
+    }
+    const to = args.pop()
+
+    throw new Error("Remove is not implemented")
+}
+
+
+function mv(args) {
+    if (args.length < 2) {
+        throw new Error("usage: mv source target")
+    }
+    const to = args.pop()
+
+    throw new Error("Move is not implemented")
+}
+
+
+function cat1(remote) {
+    remote = sanitize(remote)
+    return getContent('/drive/root'+remote+':/content')
+        .then(data => print(data) )
+}
+
+
+function cat(args) {
+    if (args.length < 1) {
+        throw new Error("usage: cat file ...")
+    }
+    return args.reduce( (prevp,cur) => prevp.then(_ => cat1(cur)), Promise.resolve())
+}
+
+
+function login(args) {
+    if (typeof args[0] === 'string') {
+        return writeFile(TOKEN_FILE, args[0])
+            .then(_ => "Access token was saved to "+TOKEN_FILE)
+    }
+    else {
+        throw new Error("usage: login accesstoken  (get it from https://dev.onedrive.com/auth/msa_oauth.htm)")
+    }
+}
+
+
+function main(argv) {
+
+    switch (argv[2]) {
+
+    case undefined:
+    case 'help':
+        console.log(Colors.bold("\nOneDrive Command Line Interface (c) Enuma Technologies Limited"))
+        console.log("\nusage: onedrive-cli COMMAND [arguments]\n\ncommands: cat cp df help login ls mv rm wget")
+        return Promise.resolve()
+
+    case 'cat':
+        return cat(argv.slice(3))
+
+    case 'wget':
+        return wget(argv.slice(3))
+
+    case 'ls':
+        return ls(argv.slice(3))
+
+    case 'df':
+        return df()
+
+    case 'cp':
+        return cp(argv.slice(3))
+
+    case 'mv':
+        return mv(argv.slice(3))
+
+    case 'rm':
+        return rm(argv.slice(3))
+
+    case 'login':
+        return login(argv.slice(3))
+
+    default:
+        return Promise.reject("Unknown command: "+argv[2])
+    }
+}
+
+
+try {
+    main(process.argv)
+        .then(result => {
+            if (typeof result !== 'undefined') {
+                console.log(Colors.green(result))
+            }
+        })
+        .catch(err => {
+            console.error(Colors.red(err))
+        })
+}
+catch(err) {
+    console.error(Colors.red(err))
+}
