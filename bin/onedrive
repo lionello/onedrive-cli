@@ -73,7 +73,7 @@ var lazyToken = function() {
 
 
 function call(url, method, body, mime) {
-    console.error(Colors.yellow(url))
+    console.error(Colors.yellow(method || 'GET'), url)
     var prefer
     if (typeof body === 'object' && !(body instanceof Buffer)) {
         if ("@content.sourceUrl" in body) {
@@ -100,8 +100,8 @@ function call(url, method, body, mime) {
 }
 
 
-function getContent(url, method, body) {
-    console.error(Colors.yellow(url))
+function getContent(url) {
+    console.error(Colors.yellow('GET'), url)
     return lazyToken()
         .then(token => RP({
             baseUrl: 'https://api.onedrive.com/v1.0/',
@@ -139,7 +139,6 @@ function df() {
                     pp(drive.quota.deleted),
                     drive.status.state)
             }
-            return ""
         })
 }
 
