@@ -291,6 +291,7 @@ function download(from, to) {
 function cp(args) {
     if (args.length < 2) {
         console.log("usage: cp source target")
+        console.log("       cp source ... directory")
     }
     else {
         const to = args.pop()
@@ -318,7 +319,7 @@ function cp(args) {
 
 function rm(args) {
     if (args.length < 1) {
-        console.log("usage: rm file")
+        console.log("usage: rm file ...")
     }
     else {
         const to = args.pop()
@@ -330,6 +331,7 @@ function rm(args) {
 function mv(args) {
     if (args.length < 2) {
         console.log("usage: mv source target")
+        console.log("       mv source ... directory")
     }
     else {
         const to = args.pop()
