@@ -66,8 +66,8 @@ var lazyToken = function() {
             return token
         })
         .catch(err => {
-            console.error(Colors.red(err.message || err))
-            throw new Error("Access token was not found; 'login' first.")
+            console.error(Colors.bold("Access token was not found; 'login' first."))
+            throw err
         })
     }
 
@@ -289,47 +289,51 @@ function download(from, to) {
 
 function cp(args) {
     if (args.length < 2) {
-        throw new Error("usage: cp source target")
-    }
-    const to = args.pop()
-
-    if (args[0].startsWith(':/') && to.startsWith(':/')) {
-        throw new Error("Remote copy is not implemented.")
-    }
-    else if (args[0].startsWith('./') && to.startsWith('./')) {
-        throw new Error("Local copy is not implemented.")
-    }
-    else if (args[0].startsWith('./') || to.startsWith(':/')) {
-        // from local to onedrive
-        return args.reduce( (prevp,cur) => prevp.then(_ => upload(cur, to)), Promise.resolve(0))
-    }
-    else if (args[0].startsWith(':/') || to.startsWith('./') || to === '.') {
-        // from onedrive to local
-        return args.reduce( (prevp,cur) => prevp.then(_ => download(cur, to)), Promise.resolve(0))
+        console.log("usage: cp source target")
     }
     else {
-        throw new Error('Use ./ or :/ path prefix for local or remote paths.')
+        const to = args.pop()
+
+        if (args[0].startsWith(':/') && to.startsWith(':/')) {
+            throw new Error("Remote copy is not implemented.")
+        }
+        else if (args[0].startsWith('./') && to.startsWith('./')) {
+            throw new Error("Local copy is not implemented.")
+        }
+        else if (args[0].startsWith('./') || to.startsWith(':/')) {
+            // from local to onedrive
+            return args.reduce( (prevp,cur) => prevp.then(_ => upload(cur, to)), Promise.resolve(0))
+        }
+        else if (args[0].startsWith(':/') || to.startsWith('./') || to === '.') {
+            // from onedrive to local
+            return args.reduce( (prevp,cur) => prevp.then(_ => download(cur, to)), Promise.resolve(0))
+        }
+        else {
+            throw new Error('Use ./ or :/ path prefix for local or remote paths.')
+        }
     }
 }
 
 
 function rm(args) {
     if (args.length < 1) {
-        throw new Error("usage: rm file")
+        console.log("usage: rm file")
     }
-    const to = args.pop()
-
-    throw new Error("Remove is not implemented")
+    else {
+        const to = args.pop()
+        throw new Error("Remove is not implemented")
+    }
 }
 
 
 function mv(args) {
     if (args.length < 2) {
-        throw new Error("usage: mv source target")
+        console.log("usage: mv source target")
     }
-    const to = args.pop()
-
-    throw new Error("Move is not implemented")
+    else {
+        const to = args.pop()
+        throw new Error("Move is not implemented")
+    }
 }
 
 
@@ -342,9 +346,11 @@ function cat1(remote) {
 
 function cat(args) {
     if (args.length < 1) {
-        throw new Error("usage: cat file ...")
+        console.log("usage: cat file ...")
     }
-    return args.reduce( (prevp,cur) => prevp.then(_ => cat1(cur)), Promise.resolve())
+    else {
+        return args.reduce( (prevp,cur) => prevp.then(_ => cat1(cur)), Promise.resolve())
+    }
 }
 
 
@@ -354,7 +360,9 @@ function login(args) {
             .then(_ => "Access token was saved to "+TOKEN_FILE)
     }
     else {
-        throw new Error("usage: login accesstoken  (get it from https://dev.onedrive.com/auth/msa_oauth.htm)")
+        console.log("usage: login access_token")
+        console.log("\nBrowse to",
+            Colors.underline("https://login.live.com/oauth20_authorize.srf?client_id=0000000040197E82&scope=onedrive.readwrite&response_type=token&redirect_uri=https%3A%2F%2Fenumatech.github.io%2Fonedrive-cli%2Foauthcallbackhandler.html") )
     }
 }
 
@@ -366,8 +374,8 @@ function main(argv) {
     case undefined:
     case 'help':
         console.log(Colors.bold("\nOneDrive Command Line Interface (c) Enuma Technologies Limited"))
-        console.log("\nusage: onedrive-cli COMMAND [arguments]\n\ncommands: cat cp df help login ls mv rm wget")
-        return Promise.resolve()
+        console.log("\nusage: onedrive COMMAND [arguments]\n\ncommands: cat cp df help login ls mv rm wget")
+        return
 
     case 'cat':
         return cat(argv.slice(3))
@@ -394,13 +402,14 @@ function main(argv) {
         return login(argv.slice(3))
 
     default:
-        return Promise.reject("Unknown command: "+argv[2])
+        throw new Error("Unknown command: "+argv[2])
     }
 }
 
 
 try {
-    main(process.argv)
+    Promise.resolve()
+        .then(_ => main(process.argv) )
         .then(result => {
             if (typeof result !== 'undefined') {
                 console.log(Colors.green(result))
