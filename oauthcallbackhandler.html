@@ -1,0 +1,33 @@
+<html>
+  <head>
+    <title>Simple OAuth2.0 callback handler</title>
+    <script>
+(function(){
+
+  var textarea;
+
+  function click(e) {
+
+    textarea.setSelectionRange(0, textarea.value.length)
+    return document.execCommand('copy');
+  }
+
+  function init() {
+
+    var access_token = /access_token=([^&]+)/.exec(window.location.hash)[1];
+    textarea = document.getElementById('token')
+    textarea.value = "onedrive login "+decodeURIComponent(access_token);
+
+    document.getElementById('copy').addEventListener('click', click);
+  }
+
+  window.addEventListener('load', init);
+})();
+    </script>
+  </head>
+  <body>
+    <p>Copy-paste this token in the command line:</p>
+    <textarea id='token' readonly="readonly" style="height: 20em; width:50%"></textarea>
+    <button id='copy'>Copy</button>
+  </body>
+</html>
