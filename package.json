@@ -2,7 +2,7 @@
   "name": "onedrive-cli",
   "version": "1.0.0",
   "description": "OneDrive CLI",
-  "main": "index.js",
+  "main": "bin/onedrive",
   "scripts": {
   },
   "keywords": [
@@ -12,6 +12,10 @@
     "upload",
     "download"
   ],
+  "repository": {
+    "type": "git",
+    "url": "git@github.com:enumatech/onedrive-cli.git"
+  },
   "author": "Lionello Lunesu",
   "license": "ISC",
   "dependencies": {
