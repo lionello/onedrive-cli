@@ -58,14 +58,18 @@ function humanize(num) {
 function pp(num) { return padLeft(humanize(num), 6) }
 
 
-var lazyToken = readFile(TOKEN_FILE)
-                .then(buffer => {
-                    return lazyToken = Promise.resolve(buffer.toString())
-                })
-                .catch(err => {
-                    console.error(Colors.red(err))
-                    throw new Error("Access token was not found; 'login' first.")
-                })
+var lazyToken = function() {
+    return readFile(TOKEN_FILE)
+        .then(buffer => {
+            const token = Promise.resolve(buffer.toString())
+            lazyToken = function() { return token; }
+            return token
+        })
+        .catch(err => {
+            console.error(Colors.red(err.message || err))
+            throw new Error("Access token was not found; 'login' first.")
+        })
+    }
 
 
 function call(url, method, body, mime) {
@@ -78,7 +82,7 @@ function call(url, method, body, mime) {
         body = JSON.stringify(body)
         mime = 'application/json'
     }
-    return lazyToken
+    return lazyToken()
         .then(token => RP({
             baseUrl: 'https://api.onedrive.com/v1.0/',
             uri: url,
@@ -98,7 +102,7 @@ function call(url, method, body, mime) {
 
 function getContent(url, method, body) {
     console.error(Colors.yellow(url))
-    return lazyToken
+    return lazyToken()
         .then(token => RP({
             baseUrl: 'https://api.onedrive.com/v1.0/',
             uri: url,
@@ -404,9 +408,9 @@ try {
             }
         })
         .catch(err => {
-            console.error(Colors.red(err))
+            console.error(Colors.red(err.message || err))
         })
 }
 catch(err) {
-    console.error(Colors.red(err))
+    console.error(Colors.red(err.message || err))
 }
