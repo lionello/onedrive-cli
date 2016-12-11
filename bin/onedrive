@@ -355,8 +355,9 @@ function cat(args) {
 
 
 function login(args) {
-    if (typeof args[0] === 'string') {
-        return writeFile(TOKEN_FILE, args[0])
+    const token = args.pop()
+    if (typeof token === 'string') {
+        return writeFile(TOKEN_FILE, token)
             .then(_ => "Access token was saved to "+TOKEN_FILE)
     }
     else {
