@@ -9,6 +9,7 @@
   function click(e) {
 
     textarea.setSelectionRange(0, textarea.value.length)
+    textarea.focus();
     return document.execCommand('copy');
   }
 
@@ -17,6 +18,7 @@
     var access_token = /access_token=([^&]+)/.exec(window.location.hash)[1];
     textarea = document.getElementById('token')
     textarea.value = "onedrive login "+decodeURIComponent(access_token);
+    textarea.focus();
 
     document.getElementById('copy').addEventListener('click', click);
   }
