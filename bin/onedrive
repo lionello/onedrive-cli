@@ -8,7 +8,7 @@ const Mime   = require('mime')
 const Path   = require('path')
 const Url    = require('url')
 
-const TOKEN_FILE = Path.join(require('os').homedir(),'.onedrive-cli-token')
+const TOKEN_PATH = Path.join(require('os').homedir(),'.onedrive-cli-token')
 
 
 function padLeft(str, len) {
@@ -59,15 +59,12 @@ function pp(num) { return padLeft(humanize(num), 6) }
 
 
 var lazyToken = function() {
-    return readFile(TOKEN_FILE)
+    return readFile(TOKEN_PATH)
         .then(buffer => {
             const token = Promise.resolve(buffer.toString())
+            // Next time we're invoked, simply return the resolved promise
             lazyToken = function() { return token; }
             return token
-        })
-        .catch(err => {
-            console.error(Colors.bold("Access token was not found; 'login' first."))
-            throw err
         })
     }
 
@@ -197,13 +194,15 @@ function listPage(total, cont) {
 }
 
 
-function ls(folder) {
-    if (typeof folder === 'undefined') {
-        folder = ''
+function ls(folders) {
+    if (folders.length === 0) {
+        folders = ['']
     }
 
-    //console.log(Colors.bold('Drive              Size   Used  Avail Capacity Deleted Status'))
-    return listPage(0, '/drive/root:/'+folder+':/children')
+    //console.log(Colors.bold('Permission Cnt Owner            Size     Date         Name'))
+    return folders.reduce( (prevp,folder) =>
+            prevp.then(prev => listPage(prev, '/drive/root:/'+folder+':/children') ),
+            Promise.resolve(0))
         .then(result => "total "+result)
 }
 
@@ -356,16 +355,21 @@ function cat(args) {
 }
 
 
+function loginUrl() {
+    console.log("\nBrowse to",
+        Colors.underline("https://login.live.com/oauth20_authorize.srf?client_id=0000000040197E82&scope=onedrive.readwrite&response_type=token&redirect_uri=https%3A%2F%2Fenumatech.github.io%2Fonedrive-cli%2Foauthcallbackhandler.html") )
+}
+
+
 function login(args) {
     const token = args.pop()
     if (typeof token === 'string') {
-        return writeFile(TOKEN_FILE, token)
-            .then(_ => "Access token was saved to "+TOKEN_FILE)
+        return writeFile(TOKEN_PATH, token)
+            .then(_ => "Access token was saved to "+TOKEN_PATH)
     }
     else {
         console.log("usage: login access_token")
-        console.log("\nBrowse to",
-            Colors.underline("https://login.live.com/oauth20_authorize.srf?client_id=0000000040197E82&scope=onedrive.readwrite&response_type=token&redirect_uri=https%3A%2F%2Fenumatech.github.io%2Fonedrive-cli%2Foauthcallbackhandler.html") )
+        loginUrl()
     }
 }
 
@@ -410,18 +414,22 @@ function main(argv) {
 }
 
 
-try {
-    Promise.resolve()
-        .then(_ => main(process.argv) )
-        .then(result => {
-            if (typeof result !== 'undefined') {
-                console.log(Colors.green(result))
-            }
-        })
-        .catch(err => {
-            console.error(Colors.red(err.message || err))
-        })
-}
-catch(err) {
-    console.error(Colors.red(err.message || err))
-}
+Promise.resolve()
+    .then(_ => main(process.argv) )
+    .then(result => {
+        if (typeof result !== 'undefined') {
+            console.log(Colors.green(result))
+        }
+    })
+    .catch(err => {
+        console.error(Colors.red(err))
+        // Special error handling case for fatal login failures
+        if (err.statusCode === 401 || err.path === TOKEN_PATH) {
+            loginUrl()
+            // Exit with -1 to ensure xargs stops invoking us
+            process.exit(-1)
+        }
+        else {
+            process.exit(1)
+        }
+    })
