@@ -243,25 +243,27 @@ Prefer: respond-async
 */
 function wget(args) {
     if (args.length < 2) {
-        throw new Error("usage: wget url target")
+        console.log("usage: wget url target")
     }
-    var to = args.pop()
-    const from = args[0].startsWith('http') ? args[0] : "http://" + args[0]
-    const data = {
-        "@content.sourceUrl": from,
-        name: Path.basename(to),
-        file: { }
+    else {
+        var to = args.pop()
+        const from = args[0].startsWith('http') ? args[0] : "http://" + args[0]
+        const data = {
+            "@content.sourceUrl": from,
+            name: Path.basename(to),
+            file: { }
+        }
+        if (data.name === '' || to.endsWith('/')) {
+            throw new Error("Invalid target name")
+        }
+        var path = Path.dirname(to+"hack")
+        to = sanitize(to)
+        path = sanitize(path)
+        return call('/drive/root'+path+':/children', 'POST', data)
+            .then(result => {
+                console.log(from, '=>', to)
+            })
     }
-    if (data.name === '' || to.endsWith('/')) {
-        throw new Error("Invalid target name")
-    }
-    var path = Path.dirname(to+"hack")
-    to = sanitize(to)
-    path = sanitize(path)
-    return call('/drive/root'+path+':/children', 'POST', data)
-        .then(result => {
-            console.log(from, '=>', to)
-        })
 }
 
 
