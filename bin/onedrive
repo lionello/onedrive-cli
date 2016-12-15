@@ -195,7 +195,7 @@ function listPage(total, cont) {
                     f.createdBy.user.displayName,
                     padLeft(f.size,9),
                     m.format(Math.abs(now-m)<threshold ? 'MMM DD HH:mm' : 'MMM DD  YYYY'),
-                    d ? Colors.blue(f.name) : f.name)
+                    d ? Colors.bold(Colors.blue(f.name))+'/' : f.name)
             }
             return listPage(total, result['@odata.nextLink'])
         })
