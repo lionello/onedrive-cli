@@ -61,6 +61,5 @@ the local path, or use `:/` as a prefix for the remote path. Either one will suf
 
 ## TODO
 * Implement `rm`
-* Implement `mv`
-* Fix OAuth redirect on Safari
+* Fix OAuth redirect on Safari (https://bugs.webkit.org/show_bug.cgi?id=24175)
 * Register with NPM

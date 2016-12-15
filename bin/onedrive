@@ -7,6 +7,7 @@ const FS     = require('fs')
 const Mime   = require('mime')
 const Path   = require('path')
 const Url    = require('url')
+const Crypto = require('crypto')
 
 const TOKEN_PATH = Path.join(require('os').homedir(),'.onedrive-cli-token')
 
@@ -30,7 +31,7 @@ function readFile(filename) {
 
 function writeFile(filename, data) {
     return new Promise( (resolve,reject) => {
-        FS.writeFile(filename, data, (err) => err?reject(err):resolve() )
+        FS.writeFile(filename, data, err => err?reject(err):resolve() )
     })
 }
 
@@ -38,6 +39,13 @@ function writeFile(filename, data) {
 function print(data) {
     return new Promise( (resolve,reject) => {
         process.stdout.write(data, err => err?reject(err):resolve() )
+    })
+}
+
+
+function unlink(path) {
+    return new Promise( (resolve,reject) => {
+        FS.unlink(path, err => err?reject(err):resolve() )
     })
 }
 
@@ -212,7 +220,7 @@ function ls(folders) {
 PUT /drive/root:/{parent-path}/{filename}:/content
 @name.conflictBehavior   fail, replace (def), or rename.
 */
-function upload(from, to) {
+function upload(copy, from, to) {
     if (from.endsWith('/')) {
         throw new Error("Invalid source name")
     }
@@ -222,9 +230,24 @@ function upload(from, to) {
     to = sanitize(to)
     const mime = Mime.lookup(from)
     return readFile(from)
-        .then(data => call('/drive/root'+to+':/content?@name.conflictBehavior=fail', 'PUT', data, mime) )
+        .then(data => {
+            return call('/drive/root'+to+':/content?@name.conflictBehavior=fail', 'PUT', data, mime)
+                .then(result => {
+                    const sha1 = Crypto.createHash("sha1").update(data).digest('hex')
+                    if (sha1.toUpperCase() !== result.file.hashes.sha1Hash) {
+                        throw new Error("sha1Hash mismatch: "+to)
+                    }
+                    return result
+                })
+        })
         .then(result => {
-            console.log(from, '->', to)
+            if (copy === 'move') {
+                console.log(from, '=>', to, result.id)
+                return unlink(from)
+            }
+            else {
+                console.log(from, '->', to, result.id)
+            }
         })
 }
 
@@ -260,7 +283,7 @@ function wget(args) {
         path = sanitize(path)
         return call('/drive/root'+path+':/children', 'POST', data)
             .then(result => {
-                console.log(from, '=>', to)
+                console.log(from, '-->', to)
             })
     }
 }
@@ -269,7 +292,7 @@ function wget(args) {
 /*
 GET /drive/root:/{path and filename}:/content
 */
-function download(from, to) {
+function download(copy, from, to) {
     if (from.endsWith('/')) {
         throw new Error("Invalid source name")
     }
@@ -283,8 +306,39 @@ function download(from, to) {
     return getContent('/drive/root'+from+':/content')
         .then(data => writeFile(to, data))
         .then(result => {
-            console.log(from, '->', to)
+            if (copy === 'move') {
+                console.log(from, '=>', to)
+                return rm(from)
+            }
+            else {
+                console.log(from, '->', to)
+            }
         })
+}
+
+
+
+function cp_mv(copy, args) {
+    const to = args.pop()
+
+    if (args[0].startsWith(':/') && to.startsWith(':/')) {
+        throw new Error(`Remote ${copy} is not implemented.`)
+    }
+    else if (args[0].startsWith('./') && to.startsWith('./')) {
+        throw new Error(`Local ${copy} is not implemented.`)
+    }
+
+    if (args[0].startsWith('./') || to.startsWith(':/')) {
+        // from local to onedrive
+        return args.reduce( (prevp,cur) => prevp.then(_ => upload(copy, cur, to)), Promise.resolve(0))
+    }
+    else if (args[0].startsWith(':/') || to.startsWith('./') || to === '.') {
+        // from onedrive to local
+        return args.reduce( (prevp,cur) => prevp.then(_ => download(copy, cur, to)), Promise.resolve(0))
+    }
+    else {
+        throw new Error('Use ./ or :/ path prefix for local or remote paths.')
+    }
 }
 
 
@@ -294,25 +348,7 @@ function cp(args) {
         console.log("       cp source ... directory")
     }
     else {
-        const to = args.pop()
-
-        if (args[0].startsWith(':/') && to.startsWith(':/')) {
-            throw new Error("Remote copy is not implemented.")
-        }
-        else if (args[0].startsWith('./') && to.startsWith('./')) {
-            throw new Error("Local copy is not implemented.")
-        }
-        else if (args[0].startsWith('./') || to.startsWith(':/')) {
-            // from local to onedrive
-            return args.reduce( (prevp,cur) => prevp.then(_ => upload(cur, to)), Promise.resolve(0))
-        }
-        else if (args[0].startsWith(':/') || to.startsWith('./') || to === '.') {
-            // from onedrive to local
-            return args.reduce( (prevp,cur) => prevp.then(_ => download(cur, to)), Promise.resolve(0))
-        }
-        else {
-            throw new Error('Use ./ or :/ path prefix for local or remote paths.')
-        }
+        return cp_mv('copy', args)
     }
 }
 
@@ -334,8 +370,7 @@ function mv(args) {
         console.log("       mv source ... directory")
     }
     else {
-        const to = args.pop()
-        throw new Error("Move is not implemented")
+        return cp_mv('move', args)
     }
 }
 
