@@ -63,3 +63,5 @@ the local path, or use `:/` as a prefix for the remote path. Either one will suf
 * Implement `rm`
 * Fix OAuth redirect on Safari (https://bugs.webkit.org/show_bug.cgi?id=24175)
 * Register with NPM
+* Support gzip/deflate encoding for downloads
+* Uploads larger than 100MiB are not yet supported (needs range API)

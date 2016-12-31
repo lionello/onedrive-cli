@@ -8,6 +8,7 @@ const Mime   = require('mime')
 const Path   = require('path')
 const Url    = require('url')
 const Crypto = require('crypto')
+const Zlib   = require('zlib')
 
 const TOKEN_PATH = Path.join(require('os').homedir(),'.onedrive-cli-token')
 
@@ -80,7 +81,12 @@ var lazyToken = function() {
 function call(url, method, body, mime) {
     console.error(Colors.yellow(method || 'GET'), url)
     var prefer
-    if (typeof body === 'object' && !(body instanceof Buffer)) {
+    var contentEncoding
+    if (body instanceof Buffer) {
+        body = Zlib.gzipSync(body)
+        contentEncoding = 'gzip'
+    }
+    else if (typeof body === 'object') {
         if ("@content.sourceUrl" in body) {
             prefer = 'respond-async'
         }
@@ -96,6 +102,7 @@ function call(url, method, body, mime) {
             headers: {
                 Authorization: 'bearer '+token,
                 'Content-Type': mime || 'application/octet-stream',
+                'Content-Encoding': contentEncoding,
                 Prefer: prefer
             }
         }) )
@@ -248,6 +255,12 @@ function upload(copy, from, to) {
             else {
                 console.log(from, '->', to, result.id)
             }
+        })
+        .catch(err => {
+            if (err.statusCode === 404) {
+                return console.error("Skipped. Uploads larger than 100MiB are not yet supported.")
+            }
+            throw err
         })
 }
 
