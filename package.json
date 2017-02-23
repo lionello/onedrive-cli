@@ -4,6 +4,7 @@
   "description": "OneDrive CLI",
   "main": "bin/onedrive",
   "scripts": {
+    "readme": "redcarpet README.md >docs/index.html"
   },
   "keywords": [
     "onedrive",

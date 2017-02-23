@@ -1,0 +1,92 @@
+<h1>onedrive-cli</h1>
+
+<p>Cross-platform command line interface for OneDrive (Personal)</p>
+
+<h2>Installation</h2>
+
+<p><code>
+$ git clone https://github.com/enumatech/onedrive-cli.git
+$ cd onedrive-cli
+$ npm install
+$ ln -s $(realpath bin/onedrive) ~/bin/onedrive
+$ onedrive login
+</code></p>
+
+<h2>Usage</h2>
+
+<p><code>usage: onedrive COMMAND [arguments]</code></p>
+
+<p>This little utility supports the following commands:
+* <code>cat</code> - dumps the contents of a file to stdout
+* <code>chmod</code> - change sharing permissions
+* <code>cp</code> - copies a local file to OneDrive or vice-versa
+* <code>df</code> - shows OneDrive storage usage stats
+* <code>help</code> - shows list of supported commands
+* <code>login</code> - request/store an OAuth access token
+* <code>ls</code> - list the contents of a folder
+* <code>mv</code> - move a local file to OneDrive or vice-versa
+* <code>rm</code> - delete a file from OneDrive (not implemented)
+* <code>wget</code> - copy a remote URL to OneDrive (server side)</p>
+
+<h2>Examples</h2>
+
+<h5>List the contents of the Public folder</h5>
+
+<p><code>onedrive ls Public</code></p>
+
+<h5>Grep one file</h5>
+
+<p><code>onedrive cat Documents/passwords | grep boa</code></p>
+
+<h5>Let OneDrive upload a file server side</h5>
+
+<p><code>onedrive wget http://mega.com/somehugepublicfile Documents/somehugepublicfile</code></p>
+
+<h5>Upload files recursively</h5>
+
+<p><code>find * -type f -print0 | xargs -0 -n1 -I{} onedrive cp &quot;./{}&quot; &quot;Shared Favorites/{}&quot;</code></p>
+
+<h2>FAQ</h2>
+
+<h5>Access token was not found; &#39;login&#39; first.</h5>
+
+<p>The <code>onedrive</code> utility needs an access token in order to read/write to your OneDrive storage.
+Use the<code>onedrive login</code> command to get the address of the Microsoft login page. After login,
+this page will redirect to the file <code>oauthcallbackhandler.html</code> (https://github.com/enumatech/onedrive-cli/blob/gh-pages/oauthcallbackhandler.html)
+and extract the <code>access_token</code> from the URL parameters. Copy-paste this token into the command line.
+This will save the token in a file called <code>~/.onedrive-cli-token</code>. These tokens have a validity of 1 hour. (BUG: issues with Safari)</p>
+
+<h5>&quot;An item with the same name already exists under the parent&quot;</h5>
+
+<p>Currently, a copy will fail if a file with the same it already exists.
+Change the name of the target, or use other means to delete/rename the existing file in your OneDrive.</p>
+
+<h5>Invalid source name</h5>
+
+<p>You cannot copy folders. Specify a source file instead, or use wildcards.</p>
+
+<h5>Invalid target name</h5>
+
+<p>The target file name cannot be determined from the source path. Specify a target file name.</p>
+
+<h5>Use ./ or :/ path prefix for local or remote paths.</h5>
+
+<p>The <code>cp</code> command supports both local-&gt;remote as well as remote-&gt;local copy.
+To make it clear which path is remote and which is local, either use <code>./</code> as a prefix for
+the local path, or use <code>:/</code> as a prefix for the remote path. Either one will suffice.</p>
+
+<h5>chmod: Invalid file mode</h5>
+
+<p>The <code>chmod</code> command currently only supports <code>-w</code> or <code>-rw</code>. The former tried to downgrade <em>write</em>
+shares to <em>read</em>-only, whereas the latter removes all shares for the given item(s). Octal modes are accepted (for example <code>644</code>, <code>0700</code>) as well as <code>og-rw</code> or <code>g-w</code>.</p>
+
+<h2>TODO</h2>
+
+<ul>
+<li>Implement <code>rm</code></li>
+<li>Fix OAuth redirect on Safari (https://bugs.webkit.org/show_bug.cgi?id=24175)</li>
+<li>Register with NPM</li>
+<li>Support gzip/deflate encoding for downloads</li>
+<li>Uploads larger than 100MiB are not yet supported (needs range API)</li>
+<li>Support OneDrive for Business</li>
+</ul>
