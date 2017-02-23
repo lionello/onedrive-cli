@@ -14,12 +14,13 @@ $ onedrive login
 
 This little utility supports the following commands:
 * `cat` - dumps the contents of a file to stdout
+* `chmod` - change sharing permissions
 * `cp` - copies a local file to OneDrive or vice-versa
 * `df` - shows OneDrive storage usage stats
 * `help` - shows list of supported commands
 * `login` - request/store an OAuth access token
 * `ls` - list the contents of a folder
-* `mv` - move a local file to OneDrive or vice-versa (not implemented)
+* `mv` - move a local file to OneDrive or vice-versa
 * `rm` - delete a file from OneDrive (not implemented)
 * `wget` - copy a remote URL to OneDrive (server side)
 
@@ -41,7 +42,7 @@ This little utility supports the following commands:
 The `onedrive` utility needs an access token in order to read/write to your OneDrive storage.
 Use the`onedrive login` command to get the address of the Microsoft login page. After login,
 this page will redirect to the file `oauthcallbackhandler.html` (https://github.com/enumatech/onedrive-cli/blob/gh-pages/oauthcallbackhandler.html)
-and extract the `access_token` from the URL parameters. Copy-paste this token into the command line. 
+and extract the `access_token` from the URL parameters. Copy-paste this token into the command line.
 This will save the token in a file called `~/.onedrive-cli-token`. These tokens have a validity of 1 hour. (BUG: issues with Safari)
 
 ##### "An item with the same name already exists under the parent"
@@ -56,8 +57,12 @@ The target file name cannot be determined from the source path. Specify a target
 
 ##### Use ./ or :/ path prefix for local or remote paths.
 The `cp` command supports both local->remote as well as remote->local copy.
-To make it clear which path is remote and which is local, either use `./` as a prefix for 
+To make it clear which path is remote and which is local, either use `./` as a prefix for
 the local path, or use `:/` as a prefix for the remote path. Either one will suffice.
+
+##### chmod: Invalid file mode
+The `chmod` command currently only supports `-w` or `-rw`. The former tried to downgrade *write*
+shares to *read*-only, whereas the latter removes all shares for the given item(s). Octal modes are accepted (for example `644`, `0700`) as well as `og-rw` or `g-w`.
 
 ## TODO
 * Implement `rm`
@@ -65,3 +70,4 @@ the local path, or use `:/` as a prefix for the remote path. Either one will suf
 * Register with NPM
 * Support gzip/deflate encoding for downloads
 * Uploads larger than 100MiB are not yet supported (needs range API)
+* Support OneDrive for Business

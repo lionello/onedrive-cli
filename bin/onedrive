@@ -107,7 +107,7 @@ function call(url, method, body, mime) {
             }
         }) )
         .then(data => {
-            return data === '' ? {} : JSON.parse(data)
+            return data === '' ? null : JSON.parse(data)
         })
 }
 
@@ -278,7 +278,7 @@ Prefer: respond-async
 */
 function wget(args) {
     if (args.length < 2) {
-        console.log("usage: wget url target")
+        console.error("usage: wget url target")
     }
     else {
         var to = args.pop()
@@ -357,8 +357,8 @@ function cp_mv(copy, args) {
 
 function cp(args) {
     if (args.length < 2) {
-        console.log("usage: cp source target")
-        console.log("       cp source ... directory")
+        console.error("usage: cp source target")
+        console.error("       cp source ... directory")
     }
     else {
         return cp_mv('copy', args)
@@ -368,7 +368,7 @@ function cp(args) {
 
 function rm(args) {
     if (args.length < 1) {
-        console.log("usage: rm file ...")
+        console.error("usage: rm file ...")
     }
     else {
         const to = args.pop()
@@ -379,8 +379,8 @@ function rm(args) {
 
 function mv(args) {
     if (args.length < 2) {
-        console.log("usage: mv source target")
-        console.log("       mv source ... directory")
+        console.error("usage: mv source target")
+        console.error("       mv source ... directory")
     }
     else {
         return cp_mv('move', args)
@@ -397,7 +397,7 @@ function cat1(remote) {
 
 function cat(args) {
     if (args.length < 1) {
-        console.log("usage: cat file ...")
+        console.error("usage: cat file ...")
     }
     else {
         return args.reduce( (prevp,cur) => prevp.then(_ => cat1(cur)), Promise.resolve())
@@ -418,8 +418,76 @@ function login(args) {
             .then(_ => "Access token was saved to "+TOKEN_PATH)
     }
     else {
-        console.log("usage: login access_token")
+        console.error("usage: login access_token")
         loginUrl()
+    }
+}
+
+
+
+function chmod1(mode, remote) {
+    remote = sanitize(remote)
+    return call('/drive/root'+remote+':/permissions')
+        .then(result => {
+            // +w  x        POST (todo)
+            // +w  read     PATCH (todo)
+            // +w  write    NOP
+            // -w  write    PATCH
+            // -w  read     NOP
+            // -rw write    DELETE
+            // -rw read     DELETE
+            return result.value.reduce( (prevp,cur) => prevp.then(_ => {
+                if (mode === '-rw') {
+                    return call('/drive/root'+remote+':/permissions/'+cur.id, 'DELETE')
+                }
+                else if (cur.roles[0] === 'write') {
+                    // FIXME: generic 'edit' links cannot be patched to be read only
+                    return call('/drive/root'+remote+':/permissions/'+cur.id, 'PATCH', {roles:["read"]})
+                }
+            }), Promise.resolve())
+        })
+        .then(s => s === null ? "OK" : "Nothing was changed")
+}
+
+
+function chmod(args) {
+    if (args.length < 2) {
+        console.error("usage: chmod mode file ...")
+    }
+    else {
+        var mode = args[0]
+        switch (mode) {
+
+        case '0600':
+        case '0700':
+        case '600':
+        case '700':
+        case 'g-rw':
+        case 'o-rw':
+        case 'go-rw':
+        case 'og-rw':
+        case '-rw':
+            mode = '-rw'
+            break
+
+        case '0644':
+        case '0744':
+        case '644':
+        case '744':
+        case 'g-w':
+        case 'o-w':
+        case 'go-w':
+        case 'og-w':
+        case '-w':
+            mode = '-w'
+            break
+
+        default:
+            console.error("chmod: Invalid file mode:", mode)
+            return
+        }
+
+        return args.slice(1).reduce( (prevp,cur) => prevp.then(_ => chmod1(mode, cur)), Promise.resolve())
     }
 }
 
@@ -431,7 +499,7 @@ function main(argv) {
     case undefined:
     case 'help':
         console.log(Colors.bold("\nOneDrive Command Line Interface (c) Enuma Technologies Limited"))
-        console.log("\nusage: onedrive COMMAND [arguments]\n\ncommands: cat cp df help login ls mv rm wget")
+        console.log("\nusage: onedrive COMMAND [arguments]\n\ncommands: cat chmod cp df help login ls mv rm wget")
         return
 
     case 'cat':
@@ -457,6 +525,9 @@ function main(argv) {
 
     case 'login':
         return login(argv.slice(3))
+
+    case 'chmod':
+        return chmod(argv.slice(3))
 
     default:
         throw new Error("Unknown command: "+argv[2])
