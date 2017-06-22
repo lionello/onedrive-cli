@@ -18,6 +18,7 @@ This little utility supports the following commands:
 * `cp` - copies a local file to OneDrive or vice-versa
 * `df` - shows OneDrive storage usage stats
 * `help` - shows list of supported commands
+* `ln` - create a link to the remote item
 * `login` - request/store an OAuth access token
 * `ls` - list the contents of a folder
 * `mv` - move a local file to OneDrive or vice-versa
@@ -71,3 +72,4 @@ shares to *read*-only, whereas the latter removes all shares for the given item(
 * Support gzip/deflate encoding for downloads
 * Uploads larger than 100MiB are not yet supported (needs range API)
 * Support OneDrive for Business
+

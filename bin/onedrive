@@ -79,7 +79,8 @@ var lazyToken = function() {
 
 
 function call(url, method, body, mime) {
-    console.error(Colors.yellow(method || 'GET'), url)
+    method = method || 'GET'
+    console.error(Colors.yellow(method), url)
     var prefer
     var contentEncoding
     if (body instanceof Buffer) {
@@ -98,7 +99,7 @@ function call(url, method, body, mime) {
             baseUrl: 'https://api.onedrive.com/v1.0/',
             uri: url,
             body: body,
-            method: method || 'GET',
+            method: method,
             headers: {
                 Authorization: 'bearer '+token,
                 'Content-Type': mime || 'application/octet-stream',
@@ -200,7 +201,7 @@ function listPage(total, cont) {
                     mod,
                     padLeft(count,3),
                     f.createdBy.user.displayName,
-                    padLeft(f.size,9),
+                    padLeft(f.size,10),
                     m.format(Math.abs(now-m)<threshold ? 'MMM DD HH:mm' : 'MMM DD  YYYY'),
                     d ? Colors.bold(Colors.blue(f.name))+'/' : f.name)
             }
@@ -216,7 +217,7 @@ function ls(folders) {
 
     //console.log(Colors.bold('Permission Cnt Owner            Size     Date         Name'))
     return folders.reduce( (prevp,folder) =>
-            prevp.then(prev => listPage(prev, '/drive/root:/'+folder+':/children') ),
+            prevp.then(prev => listPage(prev, '/drive/root'+sanitize(folder)+':/children') ),
             Promise.resolve(0))
         .then(result => "total "+result)
 }
@@ -407,7 +408,7 @@ function cat(args) {
 
 function loginUrl() {
     console.log("\nBrowse to",
-        Colors.underline("https://login.live.com/oauth20_authorize.srf?client_id=0000000040197E82&scope=onedrive.readwrite&response_type=token&redirect_uri=https%3A%2F%2Fenumatech.github.io%2Fonedrive-cli%2Foauthcallbackhandler.html") )
+        Colors.underline("https://login.live.com/oauth20_authorize.srf?client_id=0000000040197E82&scope=onedrive.readwrite&response_type=token&redirect_uri=http%3A%2F%2Fblog.enuma.io%2Fonedrive-cli%2Foauthcallbackhandler.html") )
 }
 
 
@@ -423,6 +424,19 @@ function login(args) {
     }
 }
 
+
+function ln(args) {
+    if (args.length !== 1) {
+        console.error("usage: ln file")
+    }
+    else {
+        var remote = sanitize(args[0])
+        return call('/drive/root'+remote+':/action.createLink', 'POST', {"type":"view"})
+            .then(result => {
+                console.log(Colors.underline(result.link.webUrl))
+            })
+    }
+}
 
 
 function chmod1(mode, remote) {
@@ -499,7 +513,7 @@ function main(argv) {
     case undefined:
     case 'help':
         console.log(Colors.bold("\nOneDrive Command Line Interface (c) Enuma Technologies Limited"))
-        console.log("\nusage: onedrive COMMAND [arguments]\n\ncommands: cat chmod cp df help login ls mv rm wget")
+        console.log("\nusage: onedrive COMMAND [arguments]\n\ncommands: cat chmod cp df help ln login ls mv rm wget")
         return
 
     case 'cat':
@@ -522,6 +536,9 @@ function main(argv) {
 
     case 'rm':
         return rm(argv.slice(3))
+
+    case 'ln':
+        return ln(argv.slice(3))
 
     case 'login':
         return login(argv.slice(3))
