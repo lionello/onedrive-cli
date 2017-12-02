@@ -94,19 +94,27 @@ function call(url, method, body, mime) {
         body = JSON.stringify(body)
         mime = 'application/json'
     }
-    return lazyToken()
-        .then(token => RP({
-            baseUrl: 'https://api.onedrive.com/v1.0/',
+
+    var options = {
             uri: url,
             body: body,
             method: method,
             headers: {
-                Authorization: 'bearer '+token,
                 'Content-Type': mime || 'application/octet-stream',
                 'Content-Encoding': contentEncoding,
                 Prefer: prefer
             }
-        }) )
+    };
+
+    if (!url.startsWith('https://api.onedrive.com')) {
+      options.baseUrl = 'https://api.onedrive.com/v1.0/'
+    }
+
+    return lazyToken()
+        .then(token => {
+                options.headers.Authorization = 'bearer '+token;
+		return RP(options)
+         })
         .then(data => {
             return data === '' ? null : JSON.parse(data)
         })
