@@ -112,8 +112,8 @@ function call(url, method, body, mime) {
 
     return lazyToken()
         .then(token => {
-                options.headers.Authorization = 'bearer '+token;
-		return RP(options)
+            options.headers.Authorization = 'bearer ' + token;
+            return RP(options)
          })
         .then(data => {
             return data === '' ? null : JSON.parse(data)
