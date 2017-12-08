@@ -79,34 +79,38 @@ var lazyToken = function() {
 
 
 function call(url, method, body, mime) {
-    method = method || 'GET'
-    console.error(Colors.yellow(method), url)
-    var prefer
-    var contentEncoding
-    if (body instanceof Buffer) {
-        body = Zlib.gzipSync(body)
-        contentEncoding = 'gzip'
-    }
-    else if (typeof body === 'object') {
-        if ("@content.sourceUrl" in body) {
-            prefer = 'respond-async'
-        }
-        body = JSON.stringify(body)
-        mime = 'application/json'
-    }
+
     return lazyToken()
-        .then(token => RP({
-            baseUrl: 'https://api.onedrive.com/v1.0/',
-            uri: url,
-            body: body,
-            method: method,
-            headers: {
-                Authorization: 'bearer '+token,
-                'Content-Type': mime || 'application/octet-stream',
-                'Content-Encoding': contentEncoding,
-                Prefer: prefer
+        .then(token => {
+            const options = {
+                uri: url,
+                body: body,
+                method: method || 'GET',
+                headers: {
+                    Authorization: 'bearer ' + token,
+                    'Content-Type': mime || 'application/octet-stream',
+                }
+            };
+            console.error(Colors.yellow(options.method), url)
+
+            if (body instanceof Buffer) {
+                options.body = Zlib.gzipSync(body)
+                options.headers['Content-Encoding'] = 'gzip'
             }
-        }) )
+            else if (typeof body === 'object') {
+                if ("@content.sourceUrl" in body) {
+                    options.headers.Prefer = 'respond-async'
+                }
+                options.body = JSON.stringify(body)
+                options.headers['Content-Type'] = 'application/json'
+            }
+
+            if (!url.startsWith('https://api.onedrive.com')) {
+                options.baseUrl = 'https://api.onedrive.com/v1.0/'
+            }
+
+            return RP(options)
+         })
         .then(data => {
             return data === '' ? null : JSON.parse(data)
         })
