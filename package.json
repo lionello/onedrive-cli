@@ -1,8 +1,8 @@
 {
   "name": "onedrive-cli",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "OneDrive CLI",
-  "main": "bin/onedrive",
+  "bin": "bin/onedrive",
   "scripts": {
     "readme": "redcarpet README.md >docs/index.html"
   },
