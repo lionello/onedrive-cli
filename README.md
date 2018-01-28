@@ -44,7 +44,7 @@ The `onedrive` utility needs an access token in order to read/write to your OneD
 Use the`onedrive login` command to get the address of the Microsoft login page. After login,
 this page will redirect to the file `oauthcallbackhandler.html` (https://github.com/enumatech/onedrive-cli/blob/master/docs/oauthcallbackhandler.html)
 and extract the `access_token` from the URL parameters. Copy-paste this token into the command line.
-This will save the token in a file called `~/.onedrive-cli-token`. These tokens have a validity of 1 hour. (BUG: issues with Safari)
+This will save the token in a file called `~/.onedrive-cli-token`. These tokens have a validity of 1 hour.
 
 ##### "An item with the same name already exists under the parent"
 Currently, a copy will fail if a file with the same it already exists.
@@ -67,9 +67,11 @@ shares to *read*-only, whereas the latter removes all shares for the given item(
 
 ## TODO
 * Implement `rm`
-* Fix OAuth redirect on Safari (https://bugs.webkit.org/show_bug.cgi?id=24175)
 * Register with NPM
 * Support gzip/deflate encoding for downloads
 * Uploads larger than 100MiB are not yet supported (needs range API)
 * Support OneDrive for Business
+* Ability to get the link for a file
 
+## DONE
+* Fixed OAuth redirect on Safari (https://bugs.webkit.org/show_bug.cgi?id=24175)
