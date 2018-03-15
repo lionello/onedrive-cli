@@ -23,6 +23,8 @@ This little utility supports the following commands:
 * `ls` - list the contents of a folder
 * `mv` - move a local file to OneDrive or vice-versa
 * `rm` - delete a file from OneDrive (not implemented)
+* `sendmail` - send an invitation email for editing to recipients
+* `stat` - dump all information for a particular file
 * `wget` - copy a remote URL to OneDrive (server side)
 
 ## Examples

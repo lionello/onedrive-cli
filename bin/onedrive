@@ -11,6 +11,7 @@ const Crypto = require('crypto')
 const Zlib   = require('zlib')
 
 const TOKEN_PATH = Path.join(require('os').homedir(),'.onedrive-cli-token')
+const API_BASE_URL = 'https://api.onedrive.com/v1.0/'
 
 
 function padLeft(str, len) {
@@ -105,8 +106,8 @@ function call(url, method, body, mime) {
                 options.headers['Content-Type'] = 'application/json'
             }
 
-            if (!url.startsWith('https://api.onedrive.com')) {
-                options.baseUrl = 'https://api.onedrive.com/v1.0/'
+            if (!url.startsWith('https://')) {
+                options.baseUrl = API_BASE_URL
             }
 
             return RP(options)
@@ -121,7 +122,7 @@ function getContent(url) {
     console.error(Colors.yellow('GET'), url)
     return lazyToken()
         .then(token => RP({
-            baseUrl: 'https://api.onedrive.com/v1.0/',
+            baseUrl: API_BASE_URL,
             uri: url,
             headers: {
                 Authorization: 'bearer '+token
@@ -510,6 +511,59 @@ function chmod(args) {
 }
 
 
+function sendmail1(email, file) {
+    const payload = {
+        "requireSignIn": "true",
+        "sendInvitation": "true",
+        "roles": [ "write"],
+        "recipients": [
+          { "email": email }
+        ],
+        // "message": "You were invited by x to access y"
+    }
+    const remote = sanitize(file)
+    return call('/drive/root'+remote+':/action.invite', 'POST', payload)
+        .then(result => {
+            console.log(JSON.stringify(result, undefined, 2))
+        })
+}
+
+
+function sendmail(args) {
+    if (args.length < 2) {
+        console.error("usage: sendmail file recipient ...")
+    }
+    else {
+        const file = args[0]
+        return args.slice(1).reduce( (prevp,cur) => prevp.then(_ => sendmail1(cur, file)), Promise.resolve())
+    }
+}
+
+
+function getItemId(file) {
+    const remote = sanitize(file)
+    return call('/drive/root'+remote+':/')
+        .then(result => result.id)
+}
+
+
+function stat1(file) {
+    const remote = sanitize(file)
+    return call('/drive/root'+remote+':/')
+        .then(result => {
+            console.log(JSON.stringify(result, undefined, 2))
+        })
+}
+
+
+function stat(args) {
+    if (args.length === 0) {
+        args = ['']
+    }
+    return args.reduce( (prevp,cur) => prevp.then(_ => stat1(cur)), Promise.resolve())
+}
+
+
 function main(argv) {
 
     switch (argv[2]) {
@@ -517,7 +571,7 @@ function main(argv) {
     case undefined:
     case 'help':
         console.log(Colors.bold("\nOneDrive Command Line Interface (c) Enuma Technologies Limited"))
-        console.log("\nusage: onedrive COMMAND [arguments]\n\ncommands: cat chmod cp df help ln login ls mv rm wget")
+        console.log("\nusage: onedrive COMMAND [arguments]\n\ncommands: cat chmod cp df help sendmail ln login ls mv rm stat wget")
         return
 
     case 'cat':
@@ -549,6 +603,12 @@ function main(argv) {
 
     case 'chmod':
         return chmod(argv.slice(3))
+
+    case 'stat':
+        return stat(argv.slice(3))
+
+    case 'sendmail':
+        return sendmail(argv.slice(3))
 
     default:
         throw new Error("Unknown command: "+argv[2])
