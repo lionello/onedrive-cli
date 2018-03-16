@@ -132,8 +132,7 @@ function getContent(url) {
 
 
 function sanitize(remote) {
-    remote = remote.replace(/^:?\/?/, ":/")
-    return remote === ':/.' ? ':/' : remote
+    return remote.replace(/^:?\/?\.?/, '/drive/root:/') + ':'
 }
 
 
@@ -222,7 +221,7 @@ function ls(folders) {
 
     //console.log(Colors.bold('Permission Cnt Owner            Size     Date         Name'))
     return folders.reduce( (prevp,folder) =>
-            prevp.then(prev => listPage(prev, '/drive/root'+sanitize(folder)+':/children') ),
+            prevp.then(prev => listPage(prev, sanitize(folder)+'/children') ),
             Promise.resolve(0))
         .then(result => "total "+result)
 }
@@ -244,7 +243,7 @@ function upload(copy, from, to) {
     const mime = Mime.lookup(from)
     return readFile(from)
         .then(data => {
-            return call('/drive/root'+to+':/content?@name.conflictBehavior=fail', 'PUT', data, mime)
+            return call(to+'/content?@name.conflictBehavior=fail', 'PUT', data, mime)
                 .then(result => {
                     const sha1 = Crypto.createHash("sha1").update(data).digest('hex')
                     if (sha1.toUpperCase() !== result.file.hashes.sha1Hash) {
@@ -300,7 +299,7 @@ function wget(args) {
         var path = Path.dirname(to+"hack")
         to = sanitize(to)
         path = sanitize(path)
-        return call('/drive/root'+path+':/children', 'POST', data)
+        return call(path+'/children', 'POST', data)
             .then(result => {
                 console.log(from, '-->', to)
             })
@@ -322,7 +321,7 @@ function download(copy, from, to) {
         to = to + Path.basename(from)
     }
     from = sanitize(from)
-    return getContent('/drive/root'+from+':/content')
+    return getContent(from+'/content')
         .then(data => writeFile(to, data))
         .then(result => {
             if (copy === 'move') {
@@ -337,8 +336,7 @@ function download(copy, from, to) {
 
 
 
-function cp_mv(copy, args) {
-    const to = args.pop()
+function cp_mv(copy, args, to) {
 
     if (args[0].startsWith(':/') && to.startsWith(':/')) {
         throw new Error(`Remote ${copy} is not implemented.`)
@@ -361,13 +359,34 @@ function cp_mv(copy, args) {
 }
 
 
+function cp_many(total, cont, to) {
+    if (typeof cont === 'undefined') {
+        return total
+    }
+    return call(cont)
+        .then(result => {
+            // TODO: copy by Item ID instead of path
+            const files = result.value.map(f => f.parentReference.path.replace('/drive/root','') + '/' + f.name)
+            return cp_mv('copy', files, to)
+                .then(count => cp_many(total+count, result['@odata.nextLink']))
+        })
+}
+
 function cp(args) {
     if (args.length < 2) {
-        console.error("usage: cp source target")
-        console.error("       cp source ... directory")
+        console.error("usage: cp [-R] source target")
+        console.error("       cp [-R] source ... directory")
     }
     else {
-        return cp_mv('copy', args)
+        const to = args.pop()
+        if (args[0] !== '-R') {
+            return cp_mv('copy', args, to)
+        }
+
+        // Recursive copy
+        return args.slice(1).reduce( (prevp,folder) =>
+            prevp.then(prev => cp_many(prev, sanitize(folder)+'/children', to) ),
+            Promise.resolve(0))
     }
 }
 
@@ -377,7 +396,6 @@ function rm(args) {
         console.error("usage: rm file ...")
     }
     else {
-        const to = args.pop()
         throw new Error("Remove is not implemented")
     }
 }
@@ -389,14 +407,15 @@ function mv(args) {
         console.error("       mv source ... directory")
     }
     else {
-        return cp_mv('move', args)
+        const to = args.pop()
+        return cp_mv('move', args, to)
     }
 }
 
 
 function cat1(remote) {
     remote = sanitize(remote)
-    return getContent('/drive/root'+remote+':/content')
+    return getContent(remote+'/content')
         .then(data => print(data) )
 }
 
@@ -436,7 +455,7 @@ function ln(args) {
     }
     else {
         var remote = sanitize(args[0])
-        return call('/drive/root'+remote+':/action.createLink', 'POST', {"type":"view"})
+        return call(remote+'/action.createLink', 'POST', {"type":"view"})
             .then(result => {
                 console.log(Colors.underline(result.link.webUrl))
             })
@@ -446,7 +465,7 @@ function ln(args) {
 
 function chmod1(mode, remote) {
     remote = sanitize(remote)
-    return call('/drive/root'+remote+':/permissions')
+    return call(remote+'/permissions')
         .then(result => {
             // +w  x        POST (todo)
             // +w  read     PATCH (todo)
@@ -522,7 +541,7 @@ function sendmail1(email, file) {
         // "message": "You were invited by x to access y"
     }
     const remote = sanitize(file)
-    return call('/drive/root'+remote+':/action.invite', 'POST', payload)
+    return call(remote+'/action.invite', 'POST', payload)
         .then(result => {
             console.log(JSON.stringify(result, undefined, 2))
         })
@@ -540,16 +559,14 @@ function sendmail(args) {
 }
 
 
-function getItemId(file) {
+function getItem(file) {
     const remote = sanitize(file)
-    return call('/drive/root'+remote+':/')
-        .then(result => result.id)
+    return call(remote)
 }
 
 
 function stat1(file) {
-    const remote = sanitize(file)
-    return call('/drive/root'+remote+':/')
+    return getItem(file)
         .then(result => {
             console.log(JSON.stringify(result, undefined, 2))
         })
