@@ -33,7 +33,7 @@ function readFile(filename) {
 
 function writeFile(filename, data) {
     return new Promise( (resolve,reject) => {
-        FS.writeFile(filename, data, err => err?reject(err):resolve() )
+        FS.writeFile(filename, data, {encoding: null}, err => err?reject(err):resolve() )
     })
 }
 
@@ -126,7 +126,8 @@ function getContent(url) {
             uri: url,
             headers: {
                 Authorization: 'bearer '+token
-            }
+            },
+            encoding: null//binary
         }) )
 }
 
