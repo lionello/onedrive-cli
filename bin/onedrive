@@ -366,7 +366,8 @@ function cp_many(total, cont, to) {
     }
     return call(cont)
         .then(result => {
-            // TODO: copy by Item ID instead of path
+            // TODO: copy by Item ID instead of path?
+            // TODO: recurse into subfolders
             const files = result.value.map(f => f.parentReference.path.replace('/drive/root','') + '/' + f.name)
             return cp_mv('copy', files, to)
                 .then(count => cp_many(total+count, result['@odata.nextLink']))
