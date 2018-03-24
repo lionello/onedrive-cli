@@ -370,7 +370,7 @@ function cp_many(total, cont, target) {
             // TODO: recurse into subfolders
             const files = result.value.map(f => f.parentReference.path.replace('/drive/root','') + '/' + f.name)
             return cp_mv('copy', files, target)
-                .then(count => cp_many(total+count, result['@odata.nextLink']))
+                .then(count => cp_many(total+count, result['@odata.nextLink'], target))
         })
 }
 
