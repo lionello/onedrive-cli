@@ -92,7 +92,7 @@ function call(url, method, body, mime) {
                     'Content-Type': mime || 'application/octet-stream',
                 }
             };
-            console.error(Colors.yellow(options.method), url)
+            console.warn(Colors.yellow(options.method), url)
 
             if (body instanceof Buffer) {
                 options.body = Zlib.gzipSync(body)
@@ -119,7 +119,7 @@ function call(url, method, body, mime) {
 
 
 function getContent(url) {
-    console.error(Colors.yellow('GET'), url)
+    console.warn(Colors.yellow('GET'), url)
     return lazyToken()
         .then(token => RP({
             baseUrl: API_BASE_URL,
@@ -163,7 +163,7 @@ function df() {
 
 
 function listPage(total, cont) {
-    if (typeof cont === 'undefined') {
+    if (cont === undefined) {
         return total
     }
 
@@ -233,33 +233,33 @@ function ls(folders) {
 PUT /drive/root:/{parent-path}/{filename}:/content
 @name.conflictBehavior   fail, replace (def), or rename.
 */
-function upload(copy, from, to) {
+function upload(copy, from, target) {
     if (from.endsWith('/')) {
         throw new Error("Invalid source name")
     }
-    if (to.endsWith('/')) {
-        to = to + Path.basename(from)
+    if (target.endsWith('/')) {
+        target = target + Path.basename(from)
     }
-    to = sanitize(to)
+    target = sanitize(target)
     const mime = Mime.lookup(from)
     return readFile(from)
         .then(data => {
-            return call(to+'/content?@name.conflictBehavior=fail', 'PUT', data, mime)
+            return call(target+'/content?@name.conflictBehavior=fail', 'PUT', data, mime)
                 .then(result => {
                     const sha1 = Crypto.createHash("sha1").update(data).digest('hex')
                     if (sha1.toUpperCase() !== result.file.hashes.sha1Hash) {
-                        throw new Error("sha1Hash mismatch: "+to)
+                        throw new Error("sha1Hash mismatch: "+target)
                     }
                     return result
                 })
         })
         .then(result => {
             if (copy === 'move') {
-                console.log(from, '=>', to, result.id)
+                console.log(from, '=>', target, result.id)
                 return unlink(from)
             }
             else {
-                console.log(from, '->', to, result.id)
+                console.log(from, '->', target, result.id)
             }
         })
         .catch(err => {
@@ -287,22 +287,22 @@ function wget(args) {
         console.error("usage: wget url target")
     }
     else {
-        var to = args.pop()
+        var target = args.pop()
         const from = args[0].startsWith('http') ? args[0] : "http://" + args[0]
         const data = {
             "@content.sourceUrl": from,
-            name: Path.basename(to),
+            name: Path.basename(target),
             file: { }
         }
-        if (data.name === '' || to.endsWith('/')) {
+        if (data.name === '' || target.endsWith('/')) {
             throw new Error("Invalid target name")
         }
-        var path = Path.dirname(to+"hack")
-        to = sanitize(to)
+        var path = Path.dirname(target+"hack")
+        target = sanitize(target)
         path = sanitize(path)
         return call(path+'/children', 'POST', data)
             .then(result => {
-                console.log(from, '-->', to)
+                console.log(from, '-->', target)
             })
     }
 }
@@ -311,48 +311,48 @@ function wget(args) {
 /*
 GET /drive/root:/{path and filename}:/content
 */
-function download(copy, from, to) {
+function download(copy, from, target) {
     if (from.endsWith('/')) {
         throw new Error("Invalid source name")
     }
-    if (typeof to === 'undefined' || to === '.' || to === '') {
-        to = './'
+    if (target === undefined || target === '.' || target === '') {
+        target = './'
     }
-    if (to.endsWith('/')) {
-        to = to + Path.basename(from)
+    if (target.endsWith('/')) {
+        target = target + Path.basename(from)
     }
     from = sanitize(from)
     return getContent(from+'/content')
-        .then(data => writeFile(to, data))
+        .then(data => writeFile(target, data))
         .then(result => {
             if (copy === 'move') {
-                console.log(from, '=>', to)
+                console.log(from, '=>', target)
                 return rm(from)
             }
             else {
-                console.log(from, '->', to)
+                console.log(from, '->', target)
             }
         })
 }
 
 
 
-function cp_mv(copy, args, to) {
+function cp_mv(copy, args, target) {
 
-    if (args[0].startsWith(':/') && to.startsWith(':/')) {
+    if (args[0].startsWith(':/') && target.startsWith(':/')) {
         throw new Error(`Remote ${copy} is not implemented.`)
     }
-    else if (args[0].startsWith('./') && to.startsWith('./')) {
+    else if (args[0].startsWith('./') && target.startsWith('./')) {
         throw new Error(`Local ${copy} is not implemented.`)
     }
 
-    if (args[0].startsWith('./') || to.startsWith(':/')) {
+    if (args[0].startsWith('./') || target.startsWith(':/')) {
         // from local to onedrive
-        return args.reduce( (prevp,cur) => prevp.then(_ => upload(copy, cur, to)), Promise.resolve(0))
+        return args.reduce( (prevp,cur) => prevp.then(_ => upload(copy, cur, target)), Promise.resolve(0))
     }
-    else if (args[0].startsWith(':/') || to.startsWith('./') || to === '.') {
+    else if (args[0].startsWith(':/') || target.startsWith('./') || target === '.') {
         // from onedrive to local
-        return args.reduce( (prevp,cur) => prevp.then(_ => download(copy, cur, to)), Promise.resolve(0))
+        return args.reduce( (prevp,cur) => prevp.then(_ => download(copy, cur, target)), Promise.resolve(0))
     }
     else {
         throw new Error('Use ./ or :/ path prefix for local or remote paths.')
@@ -360,8 +360,8 @@ function cp_mv(copy, args, to) {
 }
 
 
-function cp_many(total, cont, to) {
-    if (typeof cont === 'undefined') {
+function cp_many(total, cont, target) {
+    if (cont === undefined) {
         return total
     }
     return call(cont)
@@ -369,7 +369,7 @@ function cp_many(total, cont, to) {
             // TODO: copy by Item ID instead of path?
             // TODO: recurse into subfolders
             const files = result.value.map(f => f.parentReference.path.replace('/drive/root','') + '/' + f.name)
-            return cp_mv('copy', files, to)
+            return cp_mv('copy', files, target)
                 .then(count => cp_many(total+count, result['@odata.nextLink']))
         })
 }
@@ -378,16 +378,22 @@ function cp(args) {
     if (args.length < 2) {
         console.error("usage: cp [-R] source target")
         console.error("       cp [-R] source ... directory")
+        console.error("       cp -t directory source ...")
     }
     else {
-        const to = args.pop()
+        if (args[0] === '-t') {
+            const directory = args[1]
+            return cp_mv('copy', args.slice(2), directory)
+        }
+
+        const target = args.pop()
         if (args[0] !== '-R') {
-            return cp_mv('copy', args, to)
+            return cp_mv('copy', args, target)
         }
 
         // Recursive copy
         return args.slice(1).reduce( (prevp,folder) =>
-            prevp.then(prev => cp_many(prev, sanitize(folder)+'/children', to) ),
+            prevp.then(prev => cp_many(prev, sanitize(folder)+'/children', target) ),
             Promise.resolve(0))
     }
 }
@@ -407,10 +413,16 @@ function mv(args) {
     if (args.length < 2) {
         console.error("usage: mv source target")
         console.error("       mv source ... directory")
+        console.error("       mv -t directory source ...")
     }
     else {
-        const to = args.pop()
-        return cp_mv('move', args, to)
+        if (args[0] === '-t') {
+            const directory = args[1]
+            return cp_mv('move', args.slice(2), directory)
+        }
+
+        const target = args.pop()
+        return cp_mv('move', args, target)
     }
 }
 
@@ -638,7 +650,7 @@ function main(argv) {
 Promise.resolve()
     .then(_ => main(process.argv) )
     .then(result => {
-        if (typeof result !== 'undefined') {
+        if (result !== undefined) {
             console.log(Colors.green(result))
         }
     })
