@@ -15,8 +15,9 @@ $ onedrive login
 This little utility supports the following commands:
 * `cat` - dumps the contents of a file to stdout
 * `chmod` - change sharing permissions
-* `cp` - copies a local file to OneDrive or vice-versa
+* `cp` - copies local file(s) to OneDrive or vice-versa
 * `df` - shows OneDrive storage usage stats
+* `find` - return remote filename(s), optionally separated by NUL
 * `help` - shows list of supported commands
 * `ln` - create a link to the remote item
 * `login` - request/store an OAuth access token
@@ -24,7 +25,7 @@ This little utility supports the following commands:
 * `mv` - move a local file to OneDrive or vice-versa
 * `rm` - delete a file from OneDrive (not implemented)
 * `sendmail` - send an invitation email for editing to recipients
-* `stat` - dump all information for a particular file
+* `stat` - dump all information for particular file(s)
 * `wget` - copy a remote URL to OneDrive (server side)
 
 ## Examples

@@ -19,13 +19,17 @@ $ onedrive login
 <p>This little utility supports the following commands:
 * <code>cat</code> - dumps the contents of a file to stdout
 * <code>chmod</code> - change sharing permissions
-* <code>cp</code> - copies a local file to OneDrive or vice-versa
+* <code>cp</code> - copies local file(s) to OneDrive or vice-versa
 * <code>df</code> - shows OneDrive storage usage stats
+* <code>find</code> - return remote filename(s), optionally separated by NUL
 * <code>help</code> - shows list of supported commands
+* <code>ln</code> - create a link to the remote item
 * <code>login</code> - request/store an OAuth access token
 * <code>ls</code> - list the contents of a folder
 * <code>mv</code> - move a local file to OneDrive or vice-versa
 * <code>rm</code> - delete a file from OneDrive (not implemented)
+* <code>sendmail</code> - send an invitation email for editing to recipients
+* <code>stat</code> - dump all information for particular file(s)
 * <code>wget</code> - copy a remote URL to OneDrive (server side)</p>
 
 <h2>Examples</h2>
@@ -52,9 +56,9 @@ $ onedrive login
 
 <p>The <code>onedrive</code> utility needs an access token in order to read/write to your OneDrive storage.
 Use the<code>onedrive login</code> command to get the address of the Microsoft login page. After login,
-this page will redirect to the file <code>oauthcallbackhandler.html</code> (https://github.com/enumatech/onedrive-cli/blob/gh-pages/oauthcallbackhandler.html)
+this page will redirect to the file <code>oauthcallbackhandler.html</code> (https://github.com/enumatech/onedrive-cli/blob/master/docs/oauthcallbackhandler.html)
 and extract the <code>access_token</code> from the URL parameters. Copy-paste this token into the command line.
-This will save the token in a file called <code>~/.onedrive-cli-token</code>. These tokens have a validity of 1 hour. (BUG: issues with Safari)</p>
+This will save the token in a file called <code>~/.onedrive-cli-token</code>. These tokens have a validity of 1 hour.</p>
 
 <h5>&quot;An item with the same name already exists under the parent&quot;</h5>
 
@@ -84,9 +88,15 @@ shares to <em>read</em>-only, whereas the latter removes all shares for the give
 
 <ul>
 <li>Implement <code>rm</code></li>
-<li>Fix OAuth redirect on Safari (https://bugs.webkit.org/show_bug.cgi?id=24175)</li>
 <li>Register with NPM</li>
 <li>Support gzip/deflate encoding for downloads</li>
 <li>Uploads larger than 100MiB are not yet supported (needs range API)</li>
 <li>Support OneDrive for Business</li>
+<li>Ability to get the link for a file</li>
+</ul>
+
+<h2>DONE</h2>
+
+<ul>
+<li>Fixed OAuth redirect on Safari (https://bugs.webkit.org/show_bug.cgi?id=24175)</li>
 </ul>

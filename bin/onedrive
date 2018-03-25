@@ -1,17 +1,28 @@
 #!/usr/bin/env node
-
 const RP     = require('request-promise-native')
 const Colors = require('colors')
 const Moment = require('moment')
 const FS     = require('fs')
 const Mime   = require('mime')
 const Path   = require('path')
-const Url    = require('url')
 const Crypto = require('crypto')
 const Zlib   = require('zlib')
 
 const TOKEN_PATH = Path.join(require('os').homedir(),'.onedrive-cli-token')
 const API_BASE_URL = 'https://api.onedrive.com/v1.0/'
+
+
+function sha1hash(data) {
+    const sha1 = Crypto.createHash("sha1").update(data).digest('hex')
+    return sha1.toUpperCase()
+}
+
+
+function reducePromise(array, cb, init) {
+    return array.reduce( (prevp,val,index) =>
+        prevp.then(p => cb(p, val, index, array)),
+    Promise.resolve(init))
+}
 
 
 function padLeft(str, len) {
@@ -54,7 +65,7 @@ function unlink(path) {
 
 function humanize(num) {
     const units = ["", "Ki", "Mi", "Gi", "Ti", "Pi"]
-    var str, unit = "", div = 0
+    var div = 0
     for(;;) {
         var str = Math.round(num / Math.pow(1024, div))
         if (str <= 9999) {
@@ -76,7 +87,7 @@ var lazyToken = function() {
             lazyToken = function() { return token; }
             return token
         })
-    }
+}
 
 
 function call(url, method, body, mime) {
@@ -111,7 +122,7 @@ function call(url, method, body, mime) {
             }
 
             return RP(options)
-         })
+        })
         .then(data => {
             return data === '' ? null : JSON.parse(data)
         })
@@ -134,6 +145,12 @@ function getContent(url) {
 
 function sanitize(remote) {
     return remote.replace(/^:?\/?\.?/, '/drive/root:/') + ':'
+}
+
+
+function absolute(info) {
+    const parent = info.parentReference.path.replace(/^\/drive\/root/,'')
+    return decodeURIComponent(parent) + '/' + info.name
 }
 
 
@@ -161,8 +178,7 @@ function df() {
 }
 
 
-
-function listPage(total, cont) {
+function ls_paged(total, cont) {
     if (cont === undefined) {
         return total
     }
@@ -210,7 +226,7 @@ function listPage(total, cont) {
                     m.format(Math.abs(now-m)<threshold ? 'MMM DD HH:mm' : 'MMM DD  YYYY'),
                     d ? Colors.bold(Colors.blue(f.name))+'/' : f.name)
             }
-            return listPage(total, result['@odata.nextLink'])
+            return ls_paged(total, result['@odata.nextLink'])
         })
 }
 
@@ -221,12 +237,11 @@ function ls(folders) {
     }
 
     //console.log(Colors.bold('Permission Cnt Owner            Size     Date         Name'))
-    return folders.reduce( (prevp,folder) =>
-            prevp.then(prev => listPage(prev, sanitize(folder)+'/children') ),
-            Promise.resolve(0))
+    return reducePromise(folders, (prev,folder) =>
+        ls_paged(prev, sanitize(folder)+'/children'),
+    0)
         .then(result => "total "+result)
 }
-
 
 
 /*
@@ -244,10 +259,11 @@ function upload(copy, from, target) {
     const mime = Mime.lookup(from)
     return readFile(from)
         .then(data => {
+            // TODO: skip upload if SHA1 is the same
             return call(target+'/content?@name.conflictBehavior=fail', 'PUT', data, mime)
                 .then(result => {
-                    const sha1 = Crypto.createHash("sha1").update(data).digest('hex')
-                    if (sha1.toUpperCase() !== result.file.hashes.sha1Hash) {
+                    const sha1 = sha1hash(data)
+                    if (sha1 !== result.file.hashes.sha1Hash) {
                         throw new Error("sha1Hash mismatch: "+target)
                     }
                     return result
@@ -301,7 +317,7 @@ function wget(args) {
         target = sanitize(target)
         path = sanitize(path)
         return call(path+'/children', 'POST', data)
-            .then(result => {
+            .then(_ => {
                 console.log(from, '-->', target)
             })
     }
@@ -322,9 +338,10 @@ function download(copy, from, target) {
         target = target + Path.basename(from)
     }
     from = sanitize(from)
+    // TODO: avoid download if the SHA1 is the same
     return getContent(from+'/content')
         .then(data => writeFile(target, data))
-        .then(result => {
+        .then(_ => {
             if (copy === 'move') {
                 console.log(from, '=>', target)
                 return rm(from)
@@ -348,29 +365,36 @@ function cp_mv(copy, args, target) {
 
     if (args[0].startsWith('./') || target.startsWith(':/')) {
         // from local to onedrive
-        return args.reduce( (prevp,cur) => prevp.then(_ => upload(copy, cur, target)), Promise.resolve(0))
+        return reducePromise(args, (_,cur) => upload(copy, cur, target))
     }
     else if (args[0].startsWith(':/') || target.startsWith('./') || target === '.') {
         // from onedrive to local
-        return args.reduce( (prevp,cur) => prevp.then(_ => download(copy, cur, target)), Promise.resolve(0))
+        return reducePromise(args, (_,cur) => download(copy, cur, target))
     }
     else {
         throw new Error('Use ./ or :/ path prefix for local or remote paths.')
     }
 }
 
-
-function cp_many(total, cont, target) {
+function cp_paged(cont, target) {
     if (cont === undefined) {
-        return total
+        return
     }
     return call(cont)
         .then(result => {
             // TODO: copy by Item ID instead of path?
-            // TODO: recurse into subfolders
-            const files = result.value.map(f => f.parentReference.path.replace('/drive/root','') + '/' + f.name)
-            return cp_mv('copy', files, target)
-                .then(count => cp_many(total+count, result['@odata.nextLink'], target))
+            const files = result.value.filter(info => !info.folder).map(absolute)
+            return cp_mv('copy', files, target + '/')
+                .then(_ => cp_paged(result['@odata.nextLink'], target))
+                .then(_ => {
+                    // Recurse into subfolders
+                    const folders = result.value.filter(info => info.folder)
+                    return reducePromise(folders, (_,info) => {
+                        const folder = Path.join(target, info.name)
+                        return new Promise( resolve => FS.mkdir(folder, _ => resolve(folder)) )
+                            .then(folder => cp_paged(sanitize(absolute(info)) + '/children', folder))
+                    })
+                })
         })
 }
 
@@ -392,9 +416,9 @@ function cp(args) {
         }
 
         // Recursive copy
-        return args.slice(1).reduce( (prevp,folder) =>
-            prevp.then(prev => cp_many(prev, sanitize(folder)+'/children', target) ),
-            Promise.resolve(0))
+        return reducePromise(args.slice(1), (_,folder) =>
+            cp_paged(sanitize(folder)+'/children', target)
+        )
     }
 }
 
@@ -439,7 +463,7 @@ function cat(args) {
         console.error("usage: cat file ...")
     }
     else {
-        return args.reduce( (prevp,cur) => prevp.then(_ => cat1(cur)), Promise.resolve())
+        return reducePromise(args, (_,cur) => cat1(cur))
     }
 }
 
@@ -488,7 +512,7 @@ function chmod1(mode, remote) {
             // -w  read     NOP
             // -rw write    DELETE
             // -rw read     DELETE
-            return result.value.reduce( (prevp,cur) => prevp.then(_ => {
+            return reducePromise(result.value, (_,cur) => {
                 if (mode === '-rw') {
                     return call('/drive/root'+remote+':/permissions/'+cur.id, 'DELETE')
                 }
@@ -496,7 +520,7 @@ function chmod1(mode, remote) {
                     // FIXME: generic 'edit' links cannot be patched to be read only
                     return call('/drive/root'+remote+':/permissions/'+cur.id, 'PATCH', {roles:["read"]})
                 }
-            }), Promise.resolve())
+            })
         })
         .then(s => s === null ? "OK" : "Nothing was changed")
 }
@@ -539,7 +563,7 @@ function chmod(args) {
             return
         }
 
-        return args.slice(1).reduce( (prevp,cur) => prevp.then(_ => chmod1(mode, cur)), Promise.resolve())
+        return reducePromise(args.slice(1), (_,cur) => chmod1(mode, cur))
     }
 }
 
@@ -550,7 +574,7 @@ function sendmail1(email, file) {
         "sendInvitation": "true",
         "roles": [ "write"],
         "recipients": [
-          { "email": email }
+            { "email": email }
         ],
         // "message": "You were invited by x to access y"
     }
@@ -568,7 +592,7 @@ function sendmail(args) {
     }
     else {
         const file = args[0]
-        return args.slice(1).reduce( (prevp,cur) => prevp.then(_ => sendmail1(cur, file)), Promise.resolve())
+        return reducePromise(args.slice(1), (_,cur) => sendmail1(cur, file))
     }
 }
 
@@ -591,7 +615,49 @@ function stat(args) {
     if (args.length === 0) {
         args = ['']
     }
-    return args.reduce( (prevp,cur) => prevp.then(_ => stat1(cur)), Promise.resolve())
+    return reducePromise(args, (_,cur) => stat1(cur))
+}
+
+
+function find_paged(cont, expression) {
+    if (cont === undefined) {
+        return Promise.resolve()
+    }
+    return call(cont)
+        .then(result => {
+            result.value
+                .filter(info => !info.folder)
+                .map(absolute)
+                .forEach(file => {
+                    if (expression === '-print0') {
+                        process.stdout.write(file)
+                        process.stdout.write('\0')
+                    }
+                    else {
+                        console.log(file)
+                    }
+                })
+            return find_paged(result['@odata.nextLink'], expression)
+                .then(_ => {
+                    // Recurse into subfolders
+                    const folders = result.value.filter(info => info.folder)
+                    return reducePromise(folders, (_,info) => {
+                        return find_paged(sanitize(absolute(info)) + '/children', expression)
+                    })
+                })
+        })
+}
+
+function find(args) {
+    if (args.length === 0) {
+        console.error("usage: find path ... [-print0]")
+    }
+    else {
+        const expression = args.length > 1 && args[args.length-1] === "-print0" ? args.pop() : undefined
+        return reducePromise(args, (_,folder) =>
+            find_paged(sanitize(folder)+'/children', expression)
+        )
+    }
 }
 
 
@@ -602,7 +668,7 @@ function main(argv) {
     case undefined:
     case 'help':
         console.log(Colors.bold("\nOneDrive Command Line Interface (c) Enuma Technologies Limited"))
-        console.log("\nusage: onedrive COMMAND [arguments]\n\ncommands: cat chmod cp df help sendmail ln login ls mv rm stat wget")
+        console.log("\nusage: onedrive COMMAND [arguments]\n\ncommands: cat chmod cp df find help sendmail ln login ls mv rm stat wget")
         return
 
     case 'cat':
@@ -640,6 +706,9 @@ function main(argv) {
 
     case 'sendmail':
         return sendmail(argv.slice(3))
+
+    case 'find':
+        return find(argv.slice(3))
 
     default:
         throw new Error("Unknown command: "+argv[2])
