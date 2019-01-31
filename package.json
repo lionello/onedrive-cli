@@ -1,5 +1,5 @@
 {
-  "name": "onedrive-cli",
+  "name": "@enumatech/onedrive-cli",
   "version": "1.0.1",
   "description": "OneDrive CLI",
   "bin": "bin/onedrive",
