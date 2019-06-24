@@ -9,7 +9,7 @@ let
   }));
 in mkShell {
   buildInputs = [
-    nodejs-slim-8_x
+    nodejs-8_x
     pnpm
   ];
 }
