@@ -91,12 +91,12 @@ var lazyToken = function() {
 
 
 function call(url, method, body, mime) {
-
     return lazyToken()
         .then(token => {
             const options = {
                 uri: url,
                 body: body,
+                json: true,
                 method: method || 'GET',
                 headers: {
                     Authorization: 'bearer ' + token,
@@ -122,9 +122,6 @@ function call(url, method, body, mime) {
             }
 
             return RP(options)
-        })
-        .then(data => {
-            return data === '' ? null : JSON.parse(data)
         })
 }
 
@@ -724,7 +721,7 @@ Promise.resolve()
         }
     })
     .catch(err => {
-        console.error(Colors.red(err))
+        console.error(Colors.red(err.error && err.error.error && err.error.error.localizedMessage || err.message))
         // Special error handling case for fatal login failures
         if (err.statusCode === 401 || err.path === TOKEN_PATH) {
             loginUrl()
