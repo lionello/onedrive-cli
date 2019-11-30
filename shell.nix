@@ -9,7 +9,7 @@ let
   }));
 in mkShell {
   buildInputs = [
-    nodejs-8_x
+    nodejs-10_x
     pnpm
   ];
 }
