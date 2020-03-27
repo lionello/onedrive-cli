@@ -3,7 +3,7 @@ Cross-platform command line interface for OneDrive (Personal)
 
 ## Installation
 ```
-$ git clone https://github.com/enumatech/onedrive-cli.git
+$ git clone https://github.com/lionello/onedrive-cli.git
 $ cd onedrive-cli
 $ npm install
 $ bin/onedrive login
@@ -44,7 +44,7 @@ This little utility supports the following commands:
 ##### Access token was not found; 'login' first.
 The `onedrive` utility needs an access token in order to read/write to your OneDrive storage.
 Use the`onedrive login` command to get the address of the Microsoft login page. After login,
-this page will redirect to the file `oauthcallbackhandler.html` (https://github.com/enumatech/onedrive-cli/blob/master/docs/oauthcallbackhandler.html)
+this page will redirect to the file `oauthcallbackhandler.html` (https://github.com/lionello/onedrive-cli/blob/master/docs/oauthcallbackhandler.html)
 and extract the `access_token` from the URL parameters. Copy-paste this token into the command line.
 This will save the token in a file called `~/.onedrive-cli-token`. These tokens have a validity of 1 hour.
 
