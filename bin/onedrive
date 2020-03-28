@@ -664,7 +664,7 @@ function main(argv) {
 
     case undefined:
     case 'help':
-        console.log(Colors.bold("\nOneDrive Command Line Interface (c) Enuma Technologies Limited"))
+        console.log(Colors.bold("\nOneDrive Command Line Interface (c) Lionello Lunesu"))
         console.log("\nusage: onedrive COMMAND [arguments]\n\ncommands: cat chmod cp df find help sendmail ln login ls mv rm stat wget")
         return
 
