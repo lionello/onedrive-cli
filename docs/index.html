@@ -5,7 +5,7 @@
 <h2>Installation</h2>
 
 <p><code>
-$ git clone https://github.com/enumatech/onedrive-cli.git
+$ git clone https://github.com/lionello/onedrive-cli.git
 $ cd onedrive-cli
 $ npm install
 $ ln -s $(realpath bin/onedrive) ~/bin/onedrive
@@ -56,7 +56,7 @@ $ onedrive login
 
 <p>The <code>onedrive</code> utility needs an access token in order to read/write to your OneDrive storage.
 Use the<code>onedrive login</code> command to get the address of the Microsoft login page. After login,
-this page will redirect to the file <code>oauthcallbackhandler.html</code> (https://github.com/enumatech/onedrive-cli/blob/master/docs/oauthcallbackhandler.html)
+this page will redirect to the file <code>oauthcallbackhandler.html</code> (https://github.com/lionello/onedrive-cli/blob/master/docs/oauthcallbackhandler.html)
 and extract the <code>access_token</code> from the URL parameters. Copy-paste this token into the command line.
 This will save the token in a file called <code>~/.onedrive-cli-token</code>. These tokens have a validity of 1 hour.</p>
 

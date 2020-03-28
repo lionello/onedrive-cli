@@ -467,7 +467,7 @@ function cat(args) {
 
 function loginUrl() {
     console.log("\nBrowse to",
-        Colors.underline("https://login.live.com/oauth20_authorize.srf?client_id=0000000040197E82&scope=onedrive.readwrite&response_type=token&redirect_uri=https%3A%2F%2Fenumatech.github.io%2Fonedrive-cli%2Foauthcallbackhandler.html") )
+        Colors.underline("https://login.live.com/oauth20_authorize.srf?client_id=0000000040197E82&scope=onedrive.readwrite&response_type=token&redirect_uri=https%3A%2F%2Fwww.lunesu.com%2Fonedrive-cli%2Foauthcallbackhandler.html") )
 }
 
 
