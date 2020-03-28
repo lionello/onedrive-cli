@@ -96,11 +96,11 @@ function call(url, method, body, mime) {
             const options = {
                 uri: url,
                 body: body,
-                json: true,
                 method: method || 'GET',
                 headers: {
                     Authorization: 'bearer ' + token,
                     'Content-Type': mime || 'application/octet-stream',
+                    'Accept': 'application/json'
                 }
             };
             console.warn(Colors.yellow(options.method), url)
@@ -122,6 +122,7 @@ function call(url, method, body, mime) {
             }
 
             return RP(options)
+                .then(data => JSON.parse(data))
         })
 }
 
@@ -352,7 +353,6 @@ function download(copy, from, target) {
 
 
 function cp_mv(copy, args, target) {
-
     if (args[0].startsWith(':/') && target.startsWith(':/')) {
         throw new Error(`Remote ${copy} is not implemented.`)
     }
