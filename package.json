@@ -19,7 +19,7 @@
     "url": "git@github.com:lionello/onedrive-cli.git"
   },
   "author": "Lionello Lunesu",
-  "license": "ISC",
+  "license": "MIT",
   "dependencies": {
     "colors": "^1.1.2",
     "mime": "^1.3.4",
