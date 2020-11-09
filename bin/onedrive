@@ -353,6 +353,10 @@ function download(copy, from, target) {
 
 
 function cp_mv(copy, args, target) {
+    if (args.length === 0) {
+        return Promise.resolve()
+    }
+
     if (args[0].startsWith(':/') && target.startsWith(':/')) {
         throw new Error(`Remote ${copy} is not implemented.`)
     }
@@ -380,12 +384,12 @@ function cp_paged(cont, target) {
     return call(cont)
         .then(result => {
             // TODO: copy by Item ID instead of path?
-            const files = result.value.filter(info => !info.folder).map(absolute)
+            const files = result.value.filter(info => !is_folder(info)).map(absolute)
             return cp_mv('copy', files, target + '/')
                 .then(_ => cp_paged(result['@odata.nextLink'], target))
                 .then(_ => {
                     // Recurse into subfolders
-                    const folders = result.value.filter(info => info.folder)
+                    const folders = result.value.filter(is_folder)
                     return reducePromise(folders, (_,info) => {
                         const folder = Path.join(target, info.name)
                         return new Promise( resolve => FS.mkdir(folder, _ => resolve(folder)) )
@@ -393,6 +397,10 @@ function cp_paged(cont, target) {
                     })
                 })
         })
+}
+
+function is_folder(info) {
+    return info.folder || (info.package && info.package.type === 'oneNote')
 }
 
 function cp(args) {
