@@ -729,7 +729,8 @@ Promise.resolve()
         }
     })
     .catch(err => {
-        console.error(Colors.red(err.error && err.error.error && err.error.error.localizedMessage || err.message))
+        const localizedMessage = err.error && err.error.error && err.error.error.localizedMessage
+        console.error(Colors.red(localizedMessage || err.message))
         // Special error handling case for fatal login failures
         if (err.statusCode === 401 || err.path === TOKEN_PATH) {
             loginUrl()
