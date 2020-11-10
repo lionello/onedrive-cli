@@ -17,6 +17,16 @@ function makeAbsolute(url) {
 }
 
 
+function checkResponse(response) {
+    if (!response.ok) {
+        if (!response.headers.get('content-type').startsWith('application/json')) {
+            return response.text().then(msg => { throw Error(msg) })
+        }
+        return response.json().then(json => { throw json.error })
+    }
+    return response
+}
+
 function sha1hash(data) {
     const sha1 = Crypto.createHash('sha1').update(data).digest('hex')
     return sha1.toUpperCase()
@@ -124,10 +134,8 @@ function call(url, method, body, mime) {
             }
 
             return fetch(makeAbsolute(url), options)
+                .then(checkResponse)
                 .then(data => {
-                    if (!data.ok) {
-                        return data.text().then(x => { throw new Error(x) } )
-                    }
                     return data.json()
                 })
         })
@@ -145,10 +153,8 @@ function getContent(url) {
                 Authorization: 'bearer '+token
             },
         }) )
+        .then(checkResponse)
         .then(data => {
-            if (!data.ok) {
-                return data.text().then(x => { throw new Error(x) } )
-            }
             return data.buffer()
         })
 }
@@ -742,8 +748,7 @@ Promise.resolve()
         }
     })
     .catch(err => {
-        const localizedMessage = err.error && err.error.error && err.error.error.localizedMessage
-        console.error(Colors.red(localizedMessage || err.message))
+        console.error(Colors.red(err.localizedMessage || err.message))
         // Special error handling case for fatal login failures
         if (err.statusCode === 401 || err.path === TOKEN_PATH) {
             loginUrl()
