@@ -24,8 +24,7 @@
     "colors": "^1.1.2",
     "mime": "^1.6.0",
     "moment": "^2.29.1",
-    "request": "^2.88.2",
-    "request-promise-native": "^1.0.9"
+    "node-fetch": "^2.6.1"
   },
   "devDependencies": {
     "eslint": "^4.19.1"

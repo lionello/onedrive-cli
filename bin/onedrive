@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-const RP     = require('request-promise-native')
+const fetch  = require('node-fetch')
 const Colors = require('colors')
 const Moment = require('moment')
 const FS     = require('fs')
@@ -8,8 +8,13 @@ const Path   = require('path')
 const Crypto = require('crypto')
 const Zlib   = require('zlib')
 
-const TOKEN_PATH = Path.join(require('os').homedir(),'.onedrive-cli-token')
-const API_BASE_URL = 'https://api.onedrive.com/v1.0/'
+const TOKEN_PATH = Path.join(require('os').homedir(), '.onedrive-cli-token')
+const API_BASE_URL = 'https://api.onedrive.com/v1.0'
+
+
+function makeAbsolute(url) {
+    return url.startsWith('https://') ? url : API_BASE_URL + url
+}
 
 
 function sha1hash(data) {
@@ -65,9 +70,9 @@ function unlink(path) {
 
 function humanize(num) {
     const units = ['', 'Ki', 'Mi', 'Gi', 'Ti', 'Pi']
-    var div = 0
+    let div = 0
     for(;;) {
-        var str = Math.round(num / Math.pow(1024, div))
+        const str = Math.round(num / Math.pow(1024, div))
         if (str <= 9999) {
             return str + units[div]
         }
@@ -76,7 +81,7 @@ function humanize(num) {
 }
 
 
-function pp(num) { return padLeft(humanize(num), 6) }
+function prettyPrint(num) { return padLeft(humanize(num), 6) }
 
 
 var lazyToken = function() {
@@ -84,7 +89,7 @@ var lazyToken = function() {
         .then(buffer => {
             const token = Promise.resolve(buffer.toString())
             // Next time we're invoked, simply return the resolved promise
-            lazyToken = function() { return token; }
+            lazyToken = function() { return token }
             return token
         })
 }
@@ -94,7 +99,6 @@ function call(url, method, body, mime) {
     return lazyToken()
         .then(token => {
             const options = {
-                uri: url,
                 body: body,
                 method: method || 'GET',
                 headers: {
@@ -102,8 +106,10 @@ function call(url, method, body, mime) {
                     'Content-Type': mime || 'application/octet-stream',
                     'Accept': 'application/json'
                 }
-            };
-            console.warn(Colors.yellow(options.method), url)
+            }
+            if (process.stdout.isTTY) {
+                console.warn(Colors.yellow(options.method), url)
+            }
 
             if (body instanceof Buffer) {
                 options.body = Zlib.gzipSync(body)
@@ -117,27 +123,34 @@ function call(url, method, body, mime) {
                 options.headers['Content-Type'] = 'application/json'
             }
 
-            if (!url.startsWith('https://')) {
-                options.baseUrl = API_BASE_URL
-            }
-
-            return RP(options)
-                .then(data => JSON.parse(data))
+            return fetch(makeAbsolute(url), options)
+                .then(data => {
+                    if (!data.ok) {
+                        return data.text().then(x => { throw new Error(x) } )
+                    }
+                    return data.json()
+                })
         })
 }
 
 
 function getContent(url) {
-    console.warn(Colors.yellow('GET'), url)
+    if (process.stdout.isTTY) {
+        console.warn(Colors.yellow('GET'), url)
+    }
+
     return lazyToken()
-        .then(token => RP({
-            baseUrl: API_BASE_URL,
-            uri: url,
+        .then(token => fetch(makeAbsolute(url), {
             headers: {
                 Authorization: 'bearer '+token
             },
-            encoding: null//binary
         }) )
+        .then(data => {
+            if (!data.ok) {
+                return data.text().then(x => { throw new Error(x) } )
+            }
+            return data.buffer()
+        })
 }
 
 
@@ -160,16 +173,16 @@ function df() {
     return call('/drives')
         .then(result => {
             console.log(Colors.bold('Drive              Size   Used  Avail Capacity Deleted Status'))
-            for(var i in result.value) {
+            for(const i in result.value) {
                 const drive = result.value[i]
                 const capacity = Math.round(drive.quota.used*100 / drive.quota.total)+'% '
                 console.log(
                     padRight(drive.id,16),
-                    pp(drive.quota.total),
-                    pp(drive.quota.used),
-                    pp(drive.quota.remaining),
+                    prettyPrint(drive.quota.total),
+                    prettyPrint(drive.quota.used),
+                    prettyPrint(drive.quota.remaining),
                     padLeft(capacity,9),
-                    pp(drive.quota.deleted),
+                    prettyPrint(drive.quota.deleted),
                     drive.status.state)
             }
         })
@@ -185,11 +198,11 @@ function ls_paged(total, cont) {
         .then(result => {
             const now = Moment()
             const threshold = 1000*60*60*24*180//180days
-            for(var i in result.value) {
+            for(const i in result.value) {
                 const f = result.value[i]
                 const m = Moment(f.lastModifiedDateTime)
                 const d = 'folder' in f
-                var mod = d ? 'drwx' : '-rw-'
+                let mod = d ? 'drwx' : '-rw-'
                 if ('shared' in f) {
                     if ('effectiveRoles' in f.shared && f.shared.effectiveRoles.length === 1
                         && f.shared.effectiveRoles[0] === 'read') {
@@ -301,7 +314,7 @@ function wget(args) {
         console.error('usage: wget url target')
     }
     else {
-        var target = args.pop()
+        let target = args.pop()
         const from = args[0].startsWith('http') ? args[0] : 'http://' + args[0]
         const data = {
             '@content.sourceUrl': from,
@@ -311,7 +324,7 @@ function wget(args) {
         if (data.name === '' || target.endsWith('/')) {
             throw new Error('Invalid target name')
         }
-        var path = Path.dirname(target+'hack')
+        let path = Path.dirname(target+'hack')
         target = sanitize(target)
         path = sanitize(path)
         return call(path+'/children', 'POST', data)
@@ -497,7 +510,7 @@ function ln(args) {
         console.error('usage: ln file')
     }
     else {
-        var remote = sanitize(args[0])
+        const remote = sanitize(args[0])
         return call(remote+'/action.createLink', 'POST', {'type':'view'})
             .then(result => {
                 console.log(Colors.underline(result.link.webUrl))
@@ -536,7 +549,7 @@ function chmod(args) {
         console.error('usage: chmod mode file ...')
     }
     else {
-        var mode = args[0]
+        let mode = args[0]
         switch (mode) {
 
         case '0600':
@@ -735,9 +748,9 @@ Promise.resolve()
         if (err.statusCode === 401 || err.path === TOKEN_PATH) {
             loginUrl()
             // Exit with -1 to ensure xargs stops invoking us
-            process.exit(-1)
+            process.exitCode = -1
         }
         else {
-            process.exit(1)
+            process.exitCode = 1
         }
     })
