@@ -13,7 +13,7 @@ const API_BASE_URL = 'https://api.onedrive.com/v1.0/'
 
 
 function sha1hash(data) {
-    const sha1 = Crypto.createHash("sha1").update(data).digest('hex')
+    const sha1 = Crypto.createHash('sha1').update(data).digest('hex')
     return sha1.toUpperCase()
 }
 
@@ -64,7 +64,7 @@ function unlink(path) {
 
 
 function humanize(num) {
-    const units = ["", "Ki", "Mi", "Gi", "Ti", "Pi"]
+    const units = ['', 'Ki', 'Mi', 'Gi', 'Ti', 'Pi']
     var div = 0
     for(;;) {
         var str = Math.round(num / Math.pow(1024, div))
@@ -98,7 +98,7 @@ function call(url, method, body, mime) {
                 body: body,
                 method: method || 'GET',
                 headers: {
-                    Authorization: 'bearer ' + token,
+                    'Authorization': 'bearer ' + token,
                     'Content-Type': mime || 'application/octet-stream',
                     'Accept': 'application/json'
                 }
@@ -110,7 +110,7 @@ function call(url, method, body, mime) {
                 options.headers['Content-Encoding'] = 'gzip'
             }
             else if (typeof body === 'object') {
-                if ("@content.sourceUrl" in body) {
+                if ('@content.sourceUrl' in body) {
                     options.headers.Prefer = 'respond-async'
                 }
                 options.body = JSON.stringify(body)
@@ -188,10 +188,10 @@ function ls_paged(total, cont) {
             for(var i in result.value) {
                 const f = result.value[i]
                 const m = Moment(f.lastModifiedDateTime)
-                const d = "folder" in f
+                const d = 'folder' in f
                 var mod = d ? 'drwx' : '-rw-'
-                if ("shared" in f) {
-                    if ("effectiveRoles" in f.shared && f.shared.effectiveRoles.length === 1
+                if ('shared' in f) {
+                    if ('effectiveRoles' in f.shared && f.shared.effectiveRoles.length === 1
                         && f.shared.effectiveRoles[0] === 'read') {
                         mod += d ? 'r-x' : 'r--'
                         if (f.shared.scope === 'anonymous') {
@@ -238,7 +238,7 @@ function ls(folders) {
     return reducePromise(folders, (prev,folder) =>
         ls_paged(prev, sanitize(folder)+'/children'),
     0)
-        .then(result => "total "+result)
+        .then(result => 'total '+result)
 }
 
 
@@ -248,7 +248,7 @@ PUT /drive/root:/{parent-path}/{filename}:/content
 */
 function upload(copy, from, target) {
     if (from.endsWith('/')) {
-        throw new Error("Invalid source name")
+        throw new Error('Invalid source name')
     }
     if (target.endsWith('/')) {
         target = target + Path.basename(from)
@@ -262,7 +262,7 @@ function upload(copy, from, target) {
                 .then(result => {
                     const sha1 = sha1hash(data)
                     if (sha1 !== result.file.hashes.sha1Hash) {
-                        throw new Error("sha1Hash mismatch: "+target)
+                        throw new Error('sha1Hash mismatch: '+target)
                     }
                     return result
                 })
@@ -278,7 +278,7 @@ function upload(copy, from, target) {
         })
         .catch(err => {
             if (err.statusCode === 404) {
-                return console.error("Skipped. Uploads larger than 100MiB are not yet supported.")
+                return console.error('Skipped. Uploads larger than 100MiB are not yet supported.')
             }
             throw err
         })
@@ -298,20 +298,20 @@ Prefer: respond-async
 */
 function wget(args) {
     if (args.length < 2) {
-        console.error("usage: wget url target")
+        console.error('usage: wget url target')
     }
     else {
         var target = args.pop()
-        const from = args[0].startsWith('http') ? args[0] : "http://" + args[0]
+        const from = args[0].startsWith('http') ? args[0] : 'http://' + args[0]
         const data = {
-            "@content.sourceUrl": from,
+            '@content.sourceUrl': from,
             name: Path.basename(target),
             file: { }
         }
         if (data.name === '' || target.endsWith('/')) {
-            throw new Error("Invalid target name")
+            throw new Error('Invalid target name')
         }
-        var path = Path.dirname(target+"hack")
+        var path = Path.dirname(target+'hack')
         target = sanitize(target)
         path = sanitize(path)
         return call(path+'/children', 'POST', data)
@@ -327,7 +327,7 @@ GET /drive/root:/{path and filename}:/content
 */
 function download(copy, from, target) {
     if (from.endsWith('/')) {
-        throw new Error("Invalid source name")
+        throw new Error('Invalid source name')
     }
     if (target === undefined || target === '.' || target === '') {
         target = './'
@@ -405,9 +405,9 @@ function is_folder(info) {
 
 function cp(args) {
     if (args.length < 2) {
-        console.error("usage: cp [-R] source target")
-        console.error("       cp [-R] source ... directory")
-        console.error("       cp -t directory source ...")
+        console.error('usage: cp [-R] source target')
+        console.error('       cp [-R] source ... directory')
+        console.error('       cp -t directory source ...')
     }
     else {
         if (args[0] === '-t') {
@@ -430,19 +430,19 @@ function cp(args) {
 
 function rm(args) {
     if (args.length < 1) {
-        console.error("usage: rm file ...")
+        console.error('usage: rm file ...')
     }
     else {
-        throw new Error("Remove is not implemented")
+        throw new Error('Remove is not implemented')
     }
 }
 
 
 function mv(args) {
     if (args.length < 2) {
-        console.error("usage: mv source target")
-        console.error("       mv source ... directory")
-        console.error("       mv -t directory source ...")
+        console.error('usage: mv source target')
+        console.error('       mv source ... directory')
+        console.error('       mv -t directory source ...')
     }
     else {
         if (args[0] === '-t') {
@@ -465,7 +465,7 @@ function cat1(remote) {
 
 function cat(args) {
     if (args.length < 1) {
-        console.error("usage: cat file ...")
+        console.error('usage: cat file ...')
     }
     else {
         return reducePromise(args, (_,cur) => cat1(cur))
@@ -474,8 +474,8 @@ function cat(args) {
 
 
 function loginUrl() {
-    console.log("\nBrowse to",
-        Colors.underline("https://login.live.com/oauth20_authorize.srf?client_id=0000000040197E82&scope=onedrive.readwrite&response_type=token&redirect_uri=https%3A%2F%2Fwww.lunesu.com%2Fonedrive-cli%2Foauthcallbackhandler.html") )
+    console.log('\nBrowse to',
+        Colors.underline('https://login.live.com/oauth20_authorize.srf?client_id=0000000040197E82&scope=onedrive.readwrite&response_type=token&redirect_uri=https%3A%2F%2Fwww.lunesu.com%2Fonedrive-cli%2Foauthcallbackhandler.html') )
 }
 
 
@@ -483,10 +483,10 @@ function login(args) {
     const token = args.pop()
     if (typeof token === 'string') {
         return writeFile(TOKEN_PATH, token)
-            .then(_ => "Access token was saved to "+TOKEN_PATH)
+            .then(_ => 'Access token was saved to '+TOKEN_PATH)
     }
     else {
-        console.error("usage: login access_token")
+        console.error('usage: login access_token')
         loginUrl()
     }
 }
@@ -494,11 +494,11 @@ function login(args) {
 
 function ln(args) {
     if (args.length !== 1) {
-        console.error("usage: ln file")
+        console.error('usage: ln file')
     }
     else {
         var remote = sanitize(args[0])
-        return call(remote+'/action.createLink', 'POST', {"type":"view"})
+        return call(remote+'/action.createLink', 'POST', {'type':'view'})
             .then(result => {
                 console.log(Colors.underline(result.link.webUrl))
             })
@@ -523,17 +523,17 @@ function chmod1(mode, remote) {
                 }
                 else if (cur.roles[0] === 'write') {
                     // FIXME: generic 'edit' links cannot be patched to be read only
-                    return call('/drive/root'+remote+':/permissions/'+cur.id, 'PATCH', {roles:["read"]})
+                    return call('/drive/root'+remote+':/permissions/'+cur.id, 'PATCH', {roles:['read']})
                 }
             })
         })
-        .then(s => s === null ? "OK" : "Nothing was changed")
+        .then(s => s === null ? 'OK' : 'Nothing was changed')
 }
 
 
 function chmod(args) {
     if (args.length < 2) {
-        console.error("usage: chmod mode file ...")
+        console.error('usage: chmod mode file ...')
     }
     else {
         var mode = args[0]
@@ -564,7 +564,7 @@ function chmod(args) {
             break
 
         default:
-            console.error("chmod: Invalid file mode:", mode)
+            console.error('chmod: Invalid file mode:', mode)
             return
         }
 
@@ -575,11 +575,11 @@ function chmod(args) {
 
 function sendmail1(email, file) {
     const payload = {
-        "requireSignIn": "true",
-        "sendInvitation": "true",
-        "roles": [ "write"],
-        "recipients": [
-            { "email": email }
+        'requireSignIn': 'true',
+        'sendInvitation': 'true',
+        'roles': [ 'write'],
+        'recipients': [
+            { 'email': email }
         ],
         // "message": "You were invited by x to access y"
     }
@@ -593,7 +593,7 @@ function sendmail1(email, file) {
 
 function sendmail(args) {
     if (args.length < 2) {
-        console.error("usage: sendmail file recipient ...")
+        console.error('usage: sendmail file recipient ...')
     }
     else {
         const file = args[0]
@@ -655,10 +655,10 @@ function find_paged(cont, expression) {
 
 function find(args) {
     if (args.length === 0) {
-        console.error("usage: find path ... [-print0]")
+        console.error('usage: find path ... [-print0]')
     }
     else {
-        const expression = args.length > 1 && args[args.length-1] === "-print0" ? args.pop() : undefined
+        const expression = args.length > 1 && args[args.length-1] === '-print0' ? args.pop() : undefined
         return reducePromise(args, (_,folder) =>
             find_paged(sanitize(folder)+'/children', expression)
         )
@@ -672,8 +672,8 @@ function main(argv) {
 
     case undefined:
     case 'help':
-        console.log(Colors.bold("\nOneDrive Command Line Interface (c) Lionello Lunesu"))
-        console.log("\nusage: onedrive COMMAND [arguments]\n\ncommands: cat chmod cp df find help sendmail ln login ls mv rm stat wget")
+        console.log(Colors.bold('\nOneDrive Command Line Interface (c) Lionello Lunesu'))
+        console.log('\nusage: onedrive COMMAND [arguments]\n\ncommands: cat chmod cp df find help sendmail ln login ls mv rm stat wget')
         return
 
     case 'cat':
@@ -716,7 +716,7 @@ function main(argv) {
         return find(argv.slice(3))
 
     default:
-        throw new Error("Unknown command: "+argv[2])
+        throw new Error('Unknown command: '+argv[2])
     }
 }
 
