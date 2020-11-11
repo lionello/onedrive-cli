@@ -1,11 +1,11 @@
 #!/usr/bin/env node
+const Colors = require('colors/safe')
+const Crypto = require('crypto')
 const fetch  = require('node-fetch')
-const Colors = require('colors')
-const Moment = require('moment')
 const FS     = require('fs')
 const Mime   = require('mime')
+const Moment = require('moment')
 const Path   = require('path')
-const Crypto = require('crypto')
 const Zlib   = require('zlib')
 
 const TOKEN_PATH = Path.join(require('os').homedir(), '.onedrive-cli-token')
@@ -19,7 +19,8 @@ function makeAbsolute(url) {
 
 function checkResponse(response) {
     if (!response.ok) {
-        if (!response.headers.get('content-type').startsWith('application/json')) {
+        const contentType = response.headers.get('content-type') || ''
+        if (!contentType.startsWith('application/json')) {
             return response.text().then(msg => { throw Error(msg) })
         }
         return response.json().then(json => { throw json.error })
@@ -29,7 +30,7 @@ function checkResponse(response) {
 
 function sha1hash(data) {
     const sha1 = Crypto.createHash('sha1').update(data).digest('hex')
-    return sha1.toUpperCase()
+    return sha1
 }
 
 
@@ -279,7 +280,7 @@ function upload(copy, from, target) {
             // TODO: skip upload if SHA1 is the same
             return call(target+'/content?@name.conflictBehavior=fail', 'PUT', data, mime)
                 .then(result => {
-                    const sha1 = sha1hash(data)
+                    const sha1 = sha1hash(data).toUpperCase()
                     if (sha1 !== result.file.hashes.sha1Hash) {
                         throw new Error('sha1Hash mismatch: '+target)
                     }
@@ -686,6 +687,10 @@ function find(args) {
 
 
 function main(argv) {
+    // Disable colors when piping to another command
+    if (!process.env.FORCE_COLOR && !process.stdout.isTTY) {
+        Colors.disable()
+    }
 
     switch (argv[2]) {
 
