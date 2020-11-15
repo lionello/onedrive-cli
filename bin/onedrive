@@ -180,8 +180,7 @@ function df() {
     return call('/drives')
         .then(result => {
             console.log(Colors.bold('Drive              Size   Used  Avail Capacity Deleted Status'))
-            for(const i in result.value) {
-                const drive = result.value[i]
+            for(const drive of result.value) {
                 const capacity = Math.round(drive.quota.used*100 / drive.quota.total)+'% '
                 console.log(
                     padRight(drive.id,16),
@@ -205,8 +204,7 @@ function ls_paged(total, cont) {
         .then(result => {
             const now = Moment()
             const threshold = 1000*60*60*24*180//180days
-            for(const i in result.value) {
-                const f = result.value[i]
+            for(const f of result.value) {
                 const m = Moment(f.lastModifiedDateTime)
                 const d = 'folder' in f
                 let mod = d ? 'drwx' : '-rw-'
@@ -261,6 +259,8 @@ function ls(folders) {
         .then(result => 'total '+result)
 }
 
+const MOVE = 'move'
+const COPY = 'copy'
 
 /*
 PUT /drive/root:/{parent-path}/{filename}:/content
@@ -288,7 +288,7 @@ function upload(copy, from, target) {
                 })
         })
         .then(result => {
-            if (copy === 'move') {
+            if (copy === MOVE) {
                 console.log(from, '=>', target, result.id)
                 return unlink(from)
             }
@@ -317,7 +317,7 @@ Prefer: respond-async
 }
 */
 function wget(args) {
-    if (args.length < 2) {
+    if (args.length != 2) {
         console.error('usage: wget url target')
     }
     else {
@@ -360,7 +360,7 @@ function download(copy, from, target) {
     return getContent(from+'/content')
         .then(data => writeFile(target, data))
         .then(_ => {
-            if (copy === 'move') {
+            if (copy === MOVE) {
                 console.log(from, '=>', target)
                 return rm(from)
             }
@@ -369,7 +369,6 @@ function download(copy, from, target) {
             }
         })
 }
-
 
 
 function cp_mv(copy, args, target) {
@@ -405,7 +404,7 @@ function cp_paged(cont, target) {
         .then(result => {
             // TODO: copy by Item ID instead of path?
             const files = result.value.filter(info => !is_folder(info)).map(absolute)
-            return cp_mv('copy', files, target + '/')
+            return cp_mv(COPY, files, target + '/')
                 .then(_ => cp_paged(result['@odata.nextLink'], target))
                 .then(_ => {
                     // Recurse into subfolders
@@ -432,12 +431,12 @@ function cp(args) {
     else {
         if (args[0] === '-t') {
             const directory = args[1]
-            return cp_mv('copy', args.slice(2), directory)
+            return cp_mv(COPY, args.slice(2), directory)
         }
 
         const target = args.pop()
         if (args[0] !== '-R') {
-            return cp_mv('copy', args, target)
+            return cp_mv(COPY, args, target)
         }
 
         // Recursive copy
@@ -467,11 +466,49 @@ function mv(args) {
     else {
         if (args[0] === '-t') {
             const directory = args[1]
-            return cp_mv('move', args.slice(2), directory)
+            return cp_mv(MOVE, args.slice(2), directory)
         }
 
         const target = args.pop()
-        return cp_mv('move', args, target)
+        return cp_mv(MOVE, args, target)
+    }
+}
+
+
+/*
+POST /drive/items/{parent-item}/children
+Content-Type: application/json
+
+{
+  "name": "New Folder",
+  "file": { }
+}
+*/
+function createFolder(parent, name) {
+    const remote = sanitize(parent)
+    const data = {
+        name: name,
+        folder: {}
+    }
+    return call(remote+'/children', 'POST', data)
+}
+
+
+function mkdir1(dir) {
+    const parent = Path.dirname(dir)
+    const name = Path.basename(dir)
+    return createFolder(parent, name)
+        .then(result => {
+            console.log('mkdir: created directory \''+result.name+'\'')
+        })
+}
+
+
+function mkdir(args) {
+    if (args.length < 1) {
+        console.error('usage: mkdir directory_name ...')
+    } else {
+        return reducePromise(args, (_,cur) => mkdir1(cur))
     }
 }
 
@@ -697,29 +734,23 @@ function main(argv) {
     case undefined:
     case 'help':
         console.log(Colors.bold('\nOneDrive Command Line Interface (c) Lionello Lunesu'))
-        console.log('\nusage: onedrive COMMAND [arguments]\n\ncommands: cat chmod cp df find help sendmail ln login ls mv rm stat wget')
+        console.log('\nusage: onedrive COMMAND [arguments]\n\ncommands: cat chmod cp df find help ln login ls mkdir mv rm sendmail stat wget')
         return
 
     case 'cat':
         return cat(argv.slice(3))
 
-    case 'wget':
-        return wget(argv.slice(3))
-
-    case 'ls':
-        return ls(argv.slice(3))
-
-    case 'df':
-        return df()
+    case 'chmod':
+        return chmod(argv.slice(3))
 
     case 'cp':
         return cp(argv.slice(3))
 
-    case 'mv':
-        return mv(argv.slice(3))
+    case 'df':
+        return df()
 
-    case 'rm':
-        return rm(argv.slice(3))
+    case 'find':
+        return find(argv.slice(3))
 
     case 'ln':
         return ln(argv.slice(3))
@@ -727,8 +758,17 @@ function main(argv) {
     case 'login':
         return login(argv.slice(3))
 
-    case 'chmod':
-        return chmod(argv.slice(3))
+    case 'ls':
+        return ls(argv.slice(3))
+
+    case 'mv':
+        return mv(argv.slice(3))
+
+    case 'mkdir':
+        return mkdir(argv.slice(3))
+
+    case 'rm':
+        return rm(argv.slice(3))
 
     case 'stat':
         return stat(argv.slice(3))
@@ -736,8 +776,8 @@ function main(argv) {
     case 'sendmail':
         return sendmail(argv.slice(3))
 
-    case 'find':
-        return find(argv.slice(3))
+    case 'wget':
+        return wget(argv.slice(3))
 
     default:
         throw new Error('Unknown command: '+argv[2])
