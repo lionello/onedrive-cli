@@ -266,7 +266,7 @@ const COPY = 'copy'
 PUT /drive/root:/{parent-path}/{filename}:/content
 @name.conflictBehavior   fail, replace (def), or rename.
 */
-function upload(copy, from, target) {
+function upload(op, from, target) {
     if (from.endsWith('/')) {
         throw new Error('Invalid source name')
     }
@@ -288,7 +288,7 @@ function upload(copy, from, target) {
                 })
         })
         .then(result => {
-            if (copy === MOVE) {
+            if (op === MOVE) {
                 console.log(from, '=>', target, result.id)
                 return unlink(from)
             }
@@ -345,7 +345,7 @@ function wget(args) {
 /*
 GET /drive/root:/{path and filename}:/content
 */
-function download(copy, from, target) {
+function download(op, from, target) {
     if (from.endsWith('/')) {
         throw new Error('Invalid source name')
     }
@@ -360,7 +360,7 @@ function download(copy, from, target) {
     return getContent(from+'/content')
         .then(data => writeFile(target, data))
         .then(_ => {
-            if (copy === MOVE) {
+            if (op === MOVE) {
                 console.log(from, '=>', target)
                 return rm(from)
             }
@@ -371,25 +371,69 @@ function download(copy, from, target) {
 }
 
 
-function cp_mv(copy, args, target) {
+/*
+PATCH /me/drive/items/{item-id}
+Content-type: application/json
+
+{
+  "parentReference": {
+    "id": "{new-parent-folder-id}"
+  },
+  "name": "new-item-name.txt"
+}
+*/
+function moveItem(item, path, name) {
+    const remote = sanitize(item)
+    const data = {
+        name: name,
+        parentReference: {
+            path: sanitize(path)
+        }
+    }
+    return call(remote, 'PATCH', data)
+}
+
+
+function rename(from, target) {
+    if (from.endsWith('/')) {
+        throw new Error('Invalid source name')
+    }
+    if (target.endsWith('/')) {
+        target = target + Path.basename(from)
+    }
+    const parent = Path.dirname(target)
+    const name = Path.basename(target)
+    return moveItem(from, parent, name)
+        .then(_ => {
+            console.log(`renamed '${from}' -> '${target}'`)
+        })
+}
+
+
+function cp_mv(op, args, target) {
     if (args.length === 0) {
         return Promise.resolve()
     }
 
-    if (args[0].startsWith(':/') && target.startsWith(':/')) {
-        throw new Error(`Remote ${copy} is not implemented.`)
+    if (args[0].startsWith('./') && target.startsWith('./')) {
+        throw new Error(`Local ${op} is not implemented.`)
     }
-    else if (args[0].startsWith('./') && target.startsWith('./')) {
-        throw new Error(`Local ${copy} is not implemented.`)
+
+    if (args[0].startsWith(':/') && target.startsWith(':/')) {
+        if (op !== MOVE) {
+            throw new Error(`Remote ${op} is not implemented.`)
+        }
+        // from onedrive to onedrive
+        return reducePromise(args, (_,cur) => rename(cur, target))
     }
 
     if (args[0].startsWith('./') || target.startsWith(':/')) {
         // from local to onedrive
-        return reducePromise(args, (_,cur) => upload(copy, cur, target))
+        return reducePromise(args, (_,cur) => upload(op, cur, target))
     }
     else if (args[0].startsWith(':/') || target.startsWith('./') || target === '.') {
         // from onedrive to local
-        return reducePromise(args, (_,cur) => download(copy, cur, target))
+        return reducePromise(args, (_,cur) => download(op, cur, target))
     }
     else {
         throw new Error('Use ./ or :/ path prefix for local or remote paths.')
@@ -499,7 +543,7 @@ function mkdir1(dir) {
     const name = Path.basename(dir)
     return createFolder(parent, name)
         .then(result => {
-            console.log('mkdir: created directory \''+result.name+'\'')
+            console.log(`mkdir: created directory '${result.name}'`)
         })
 }
 
