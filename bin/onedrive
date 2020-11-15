@@ -536,6 +536,14 @@ function loginUrl() {
 }
 
 
+function locate(args) {
+    if (args.length === 0) {
+        console.error('usage: locate pattern...')
+    } else {
+        return call('/drive/root/search(q=\'{asdf}\')')
+    }
+}
+
 function login(args) {
     const token = args.pop()
     if (typeof token === 'string') {
@@ -734,7 +742,7 @@ function main(argv) {
     case undefined:
     case 'help':
         console.log(Colors.bold('\nOneDrive Command Line Interface (c) Lionello Lunesu'))
-        console.log('\nusage: onedrive COMMAND [arguments]\n\ncommands: cat chmod cp df find help ln login ls mkdir mv rm sendmail stat wget')
+        console.log('\nusage: onedrive COMMAND [arguments]\n\ncommands: cat chmod cp df find help ln locate login ls mkdir mv rm sendmail stat wget')
         return
 
     case 'cat':
@@ -754,6 +762,9 @@ function main(argv) {
 
     case 'ln':
         return ln(argv.slice(3))
+
+    case 'locate':
+        return locate(argv.slice(3))
 
     case 'login':
         return login(argv.slice(3))
