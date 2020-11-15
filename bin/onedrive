@@ -732,10 +732,10 @@ function find_paged(cont, expression) {
     return call(cont)
         .then(result => {
             result.value
-                .filter(info => !info.folder)
+                .filter(info => !info.folder && (!expression.regex || expression.regex.test(info.name)))
                 .map(absolute)
                 .forEach(file => {
-                    if (expression === '-print0') {
+                    if (expression.print0) {
                         process.stdout.write(file)
                         process.stdout.write('\0')
                     }
@@ -754,12 +754,39 @@ function find_paged(cont, expression) {
         })
 }
 
+
+function globToRegExp(glob, flags) {
+    const regex = glob.replace(/([$^|{}().[\]+\\])/g,'\\$1').replace(/\*/g,'.*').replace(/\?/g,'.')
+    return new RegExp('^'+regex+'$', flags)
+}
+
 function find(args) {
     if (args.length === 0) {
-        console.error('usage: find path ... [-print0]')
+        console.error('usage: find path ... [-print0] [-name GLOB] [-iname GLOB] [-regex REGEX] [-iregex REGEX]')
     }
     else {
-        const expression = args.length > 1 && args[args.length-1] === '-print0' ? args.pop() : undefined
+        const expression = {}
+        for (let index = 0; index < args.length; ) {
+            switch (args[index]) {
+            case '-print0':
+                expression.print0 = args.splice(index, 1)
+                break
+            case '-name':
+                expression.regex = globToRegExp(args.splice(index, 2)[1])
+                break
+            case '-iname':
+                expression.regex = globToRegExp(args.splice(index, 2)[1], 'i')
+                break
+            case '-regex':
+                expression.regex = new RegExp(args.splice(index, 2)[1])
+                break
+            case '-iregex':
+                expression.regex = new RegExp(args.splice(index, 2)[1], 'i')
+                break
+            default:
+                index++
+            }
+        }
         return reducePromise(args, (_,folder) =>
             find_paged(sanitize(folder)+'/children', expression)
         )
