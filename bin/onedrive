@@ -3,6 +3,7 @@ const Colors = require('colors/safe')
 const Crypto = require('crypto')
 const fetch  = require('node-fetch')
 const FS     = require('fs')
+const Https  = require('https')
 const Mime   = require('mime')
 const Moment = require('moment')
 const Path   = require('path')
@@ -10,6 +11,9 @@ const Zlib   = require('zlib')
 
 const TOKEN_PATH = Path.join(require('os').homedir(), '.onedrive-cli-token')
 const API_BASE_URL = 'https://api.onedrive.com/v1.0'
+
+
+const httpsAgent = new Https.Agent({keepAlive: true})
 
 
 function makeAbsolute(url) {
@@ -110,6 +114,7 @@ function call(url, method, body, mime) {
     return lazyToken()
         .then(token => {
             const options = {
+                agent: httpsAgent,
                 body: body,
                 method: method || 'GET',
                 headers: {
@@ -150,8 +155,9 @@ function getContent(url) {
 
     return lazyToken()
         .then(token => fetch(makeAbsolute(url), {
+            agent: httpsAgent,
             headers: {
-                Authorization: 'bearer '+token
+                'Authorization': 'bearer '+token
             },
         }) )
         .then(checkResponse)
@@ -317,7 +323,7 @@ Prefer: respond-async
 }
 */
 function wget(args) {
-    if (args.length != 2) {
+    if (args.length !== 2) {
         console.error('usage: wget url target')
     }
     else {
@@ -551,7 +557,8 @@ function mkdir1(dir) {
 function mkdir(args) {
     if (args.length < 1) {
         console.error('usage: mkdir directory_name ...')
-    } else {
+    }
+    else {
         return reducePromise(args, (_,cur) => mkdir1(cur))
     }
 }
