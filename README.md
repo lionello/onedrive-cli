@@ -21,6 +21,7 @@ This little utility supports the following commands:
 * `ln` - create a link to the remote item
 * `login` - request/store an OAuth access token
 * `ls` - list the contents of a folder
+* `mkdir` - create a remote folder
 * `mv` - move a local file to OneDrive or vice-versa
 * `rm` - delete a file from OneDrive (not implemented)
 * `sendmail` - send an invitation email for editing to recipients
@@ -39,6 +40,9 @@ This little utility supports the following commands:
 
 ##### Upload files recursively
 `find * -type f -print0 | xargs -0 -n1 -I{} onedrive cp "./{}" "Shared Favorites/{}"`
+
+##### Move remote files to a new folder
+`onedrive find 'Pictures/Camera Roll' -regex 2015 -type f -print0 | xargs -0 onedrive mv -t :/Pictures/2015/`
 
 ## FAQ
 ##### Access token was not found; 'login' first.

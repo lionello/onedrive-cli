@@ -25,7 +25,7 @@ function checkResponse(response) {
     if (!response.ok) {
         const contentType = response.headers.get('content-type') || ''
         if (!contentType.startsWith('application/json')) {
-            return response.text().then(msg => { throw Error(msg) })
+            return response.text().then(msg => { throw new Error(msg) })
         }
         return response.json().then(json => { throw json.error })
     }
@@ -422,6 +422,10 @@ function cp_mv(op, args, target) {
         return Promise.resolve()
     }
 
+    if (args.length > 1 && !target.endsWith('/')) {
+        throw new Error('Target is not a directory')
+    }
+
     if (args[0].startsWith('./') && target.startsWith('./')) {
         throw new Error(`Local ${op} is not implemented.`)
     }
@@ -503,7 +507,7 @@ function rm(args) {
         console.error('usage: rm file ...')
     }
     else {
-        throw new Error('Remove is not implemented')
+        throw new Error('Remote rm is not implemented')
     }
 }
 
@@ -845,20 +849,20 @@ function main(argv) {
     case 'ls':
         return ls(argv.slice(3))
 
-    case 'mv':
-        return mv(argv.slice(3))
-
     case 'mkdir':
         return mkdir(argv.slice(3))
+
+    case 'mv':
+        return mv(argv.slice(3))
 
     case 'rm':
         return rm(argv.slice(3))
 
-    case 'stat':
-        return stat(argv.slice(3))
-
     case 'sendmail':
         return sendmail(argv.slice(3))
+
+    case 'stat':
+        return stat(argv.slice(3))
 
     case 'wget':
         return wget(argv.slice(3))
