@@ -124,7 +124,7 @@ function call(url, method, body, mime) {
                 }
             }
             if (process.stdout.isTTY) {
-                console.warn(Colors.yellow(options.method), url)
+                console.warn(Colors.yellow(options.method), decodeURIComponent(url))
             }
 
             if (body instanceof Buffer) {
@@ -150,7 +150,7 @@ function call(url, method, body, mime) {
 
 function getContent(url) {
     if (process.stdout.isTTY) {
-        console.warn(Colors.yellow('GET'), url)
+        console.warn(Colors.yellow('GET'), decodeURIComponent(url))
     }
 
     return lazyToken()
@@ -168,7 +168,8 @@ function getContent(url) {
 
 
 function sanitize(remote) {
-    return remote.replace(/^:?\/?\.?/, '/drive/root:/') + ':'
+    // Escape all characters except the path delimiter '/'
+    return '/drive/root:/' + encodeURIComponent(remote.replace(/^:?\/?\.?/, '')).replace(/%2f/gi,'/') + ':'
 }
 
 
