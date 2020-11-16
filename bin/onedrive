@@ -740,7 +740,8 @@ function find_paged(cont, expression) {
     return call(cont)
         .then(result => {
             result.value
-                .filter(info => !info.folder && (!expression.regex || expression.regex.test(info.name)))
+                .filter(info => expression.dirOnly !== !info.folder)
+                .filter(info => !expression.regex || expression.regex.test(info.name))
                 .map(absolute)
                 .forEach(file => {
                     if (expression.print0) {
@@ -770,7 +771,7 @@ function globToRegExp(glob, flags) {
 
 function find(args) {
     if (args.length === 0) {
-        console.error('usage: find path ... [-print0] [-name GLOB] [-iname GLOB] [-regex REGEX] [-iregex REGEX]')
+        console.error('usage: find path ... [-print0] [-name GLOB] [-iname GLOB] [-regex REGEX] [-iregex REGEX] [-type d|f]')
     }
     else {
         const expression = {}
@@ -778,6 +779,10 @@ function find(args) {
             switch (args[index]) {
             case '-print0':
                 expression.print0 = args.splice(index, 1)
+                break
+            case '-type':
+                // This is used as a tri-state: true, false, undefined
+                expression.dirOnly = args.splice(index, 2)[1] === 'd'
                 break
             case '-name':
                 expression.regex = globToRegExp(args.splice(index, 2)[1])
