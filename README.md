@@ -17,7 +17,7 @@ npm install @lionello/onedrive-cli
 
 Or use `nix-env`:
 ```sh
-nix-env -if https://github.com/lionello/onedrive-cli/archive/master.zip -A package
+nix-env -if https://github.com/lionello/onedrive-cli/archive/master.tar.gz -A package
 ```
 
 ## Usage
