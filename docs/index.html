@@ -4,11 +4,22 @@
 
 <h2>Installation</h2>
 
-<p><code>
+<p>From source:
+<code>sh
 $ git clone https://github.com/lionello/onedrive-cli.git
 $ cd onedrive-cli
 $ npm install
 $ bin/onedrive login
+</code></p>
+
+<p>Or use <code>npm</code>:
+<code>sh
+npm install @lionello/onedrive-cli
+</code></p>
+
+<p>Or use <code>nix-env</code>:
+<code>sh
+nix-env -if https://github.com/lionello/onedrive-cli/archive/master.zip -A package
 </code></p>
 
 <h2>Usage</h2>
@@ -25,6 +36,7 @@ $ bin/onedrive login
 * <code>ln</code> - create a link to the remote item
 * <code>login</code> - request/store an OAuth access token
 * <code>ls</code> - list the contents of a folder
+* <code>mkdir</code> - create a remote folder
 * <code>mv</code> - move a local file to OneDrive or vice-versa
 * <code>rm</code> - delete a file from OneDrive (not implemented)
 * <code>sendmail</code> - send an invitation email for editing to recipients
@@ -48,6 +60,10 @@ $ bin/onedrive login
 <h5>Upload files recursively</h5>
 
 <p><code>find * -type f -print0 | xargs -0 -n1 -I{} onedrive cp &quot;./{}&quot; &quot;Shared Favorites/{}&quot;</code></p>
+
+<h5>Move remote files to a new folder</h5>
+
+<p><code>onedrive find &#39;Pictures/Camera Roll&#39; -regex 2015 -type f -print0 | xargs -0 onedrive mv -t :/Pictures/2015/</code></p>
 
 <h2>FAQ</h2>
 

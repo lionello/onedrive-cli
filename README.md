@@ -2,12 +2,24 @@
 Cross-platform command line interface for OneDrive (Personal)
 
 ## Installation
-```
+From source:
+```sh
 $ git clone https://github.com/lionello/onedrive-cli.git
 $ cd onedrive-cli
 $ npm install
 $ bin/onedrive login
 ```
+
+Or use `npm`:
+```sh
+npm install @lionello/onedrive-cli
+```
+
+Or use `nix-env`:
+```sh
+nix-env -if https://github.com/lionello/onedrive-cli/archive/master.zip -A package
+```
+
 ## Usage
 `usage: onedrive COMMAND [arguments]`
 
