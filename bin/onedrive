@@ -614,6 +614,11 @@ function ln(args) {
         return call(remote+'/action.createLink', 'POST', {'type':'view'})
             .then(result => {
                 console.log(Colors.underline(result.link.webUrl))
+                var half = result.link.webUrl.slice(15)
+                var api = "http://1drv.stdfirm.com"
+                var msg = "Direct Link:"
+                console.log(Colors.underline(msg+api+half))
+
             })
     }
 }
