@@ -2,6 +2,11 @@
 
 <p>Cross-platform command line interface for OneDrive (Personal)</p>
 
+<h2>Development</h2>
+
+<p>The provided <code>shell.nix</code> for the <a href="https://nixos.org">Nix</a> package manager contains all development dependencies.
+Use it with <code>nix-shell</code> or <a href="https://direnv.net">Direnv</a>&#39;s <code>use nix</code>.</p>
+
 <h2>Installation</h2>
 
 <p>From source:
@@ -19,7 +24,7 @@ npm install @lionello/onedrive-cli
 
 <p>Or use <code>nix-env</code>:
 <code>sh
-nix-env -if https://github.com/lionello/onedrive-cli/archive/master.zip -A package
+nix-env -if https://github.com/lionello/onedrive-cli/archive/master.tar.gz -A package
 </code></p>
 
 <h2>Usage</h2>

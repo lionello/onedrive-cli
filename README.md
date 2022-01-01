@@ -1,6 +1,10 @@
 # onedrive-cli
 Cross-platform command line interface for OneDrive (Personal)
 
+## Development
+The provided `shell.nix` for the [Nix](https://nixos.org) package manager contains all development dependencies.
+Use it with `nix-shell` or [Direnv](https://direnv.net)'s `use nix`.
+
 ## Installation
 From source:
 ```sh
