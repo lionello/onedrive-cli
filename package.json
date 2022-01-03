@@ -1,35 +1,40 @@
 {
-  "name": "@lionello/onedrive-cli",
-  "version": "1.0.6",
-  "description": "OneDrive CLI",
-  "bin": "bin/onedrive",
-  "scripts": {
-    "lint": "npx eslint bin/onedrive",
-    "readme": "redcarpet README.md >docs/index.html"
-  },
-  "keywords": [
-    "onedrive",
-    "skydrive",
-    "cli",
-    "upload",
-    "download"
-  ],
-  "repository": {
-    "type": "git",
-    "url": "git@github.com:lionello/onedrive-cli.git"
-  },
-  "engines": {
-      "node": ">=10"
-  },
-  "author": "Lionello Lunesu",
-  "license": "MIT",
-  "dependencies": {
-    "colors": "^1.1.2",
-    "mime": "^1.6.0",
-    "moment": "^2.29.1",
-    "node-fetch": "^2.6.1"
-  },
-  "devDependencies": {
-    "eslint": "^8.6.0"
-  }
+    "name": "@lionello/onedrive-cli",
+    "version": "1.0.6",
+    "description": "OneDrive CLI",
+    "bin": "bin/onedrive",
+    "scripts": {
+        "lint": "npx eslint bin/onedrive",
+        "readme": "redcarpet README.md >docs/index.html"
+    },
+    "keywords": [
+        "onedrive",
+        "skydrive",
+        "cli",
+        "upload",
+        "download"
+    ],
+    "repository": {
+        "type": "git",
+        "url": "git@github.com:lionello/onedrive-cli.git"
+    },
+    "engines": {
+        "node": ">=10"
+    },
+    "author": "Lionello Lunesu",
+    "license": "MIT",
+    "dependencies": {
+        "colors": "^1.1.2",
+        "mime": "^1.6.0",
+        "moment": "^2.29.1",
+        "node-fetch": "^2.6.1"
+    },
+    "devDependencies": {
+        "eslint": "^8.6.0",
+        "prettier": "^2.5.1"
+    },
+    "prettier": {
+        "semi": false,
+        "arrowParens": "avoid"
+    }
 }
