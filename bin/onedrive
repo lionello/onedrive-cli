@@ -2,7 +2,7 @@
 const Colors = require('colors/safe')
 const Crypto = require('crypto')
 const fetch  = require('node-fetch')
-const FS     = require('fs')
+const FS     = require('fs/promises')
 const Https  = require('https')
 const Mime   = require('mime')
 const Moment = require('moment')
@@ -55,30 +55,9 @@ function padRight(str, len) {
 }
 
 
-function readFile(filename) {
-    return new Promise( (resolve,reject) => {
-        FS.readFile(filename, (err,data) => err?reject(err):resolve(data) )
-    })
-}
-
-
-function writeFile(filename, data) {
-    return new Promise( (resolve,reject) => {
-        FS.writeFile(filename, data, {encoding: null}, err => err?reject(err):resolve() )
-    })
-}
-
-
 function print(data) {
     return new Promise( (resolve,reject) => {
         process.stdout.write(data, err => err?reject(err):resolve() )
-    })
-}
-
-
-function unlink(path) {
-    return new Promise( (resolve,reject) => {
-        FS.unlink(path, err => err?reject(err):resolve() )
     })
 }
 
@@ -100,7 +79,7 @@ function prettyPrint(num) { return padLeft(humanize(num), 6) }
 
 
 var lazyToken = function() {
-    return readFile(TOKEN_PATH)
+    return FS.readFile(TOKEN_PATH)
         .then(buffer => {
             const token = Promise.resolve(buffer.toString())
             // Next time we're invoked, simply return the resolved promise
@@ -282,7 +261,7 @@ function upload(op, from, target) {
     }
     target = sanitize(target)
     const mime = Mime.lookup(from)
-    return readFile(from)
+    return FS.readFile(from)
         .then(data => {
             // TODO: skip upload if SHA1 is the same
             return call(target+'/content?@name.conflictBehavior=fail', 'PUT', data, mime)
@@ -297,7 +276,7 @@ function upload(op, from, target) {
         .then(result => {
             if (op === MOVE) {
                 console.log(from, '=>', target, result.id)
-                return unlink(from)
+                return FS.unlink(from)
             }
             else {
                 console.log(from, '->', target, result.id)
@@ -365,7 +344,7 @@ function download(op, from, target) {
     from = sanitize(from)
     // TODO: avoid download if the SHA1 is the same
     return getContent(from+'/content')
-        .then(data => writeFile(target, data))
+        .then(data => FS.writeFile(target, data))
         .then(_ => {
             if (op === MOVE) {
                 console.log(from, '=>', target)
@@ -466,7 +445,7 @@ function cp_paged(cont, target) {
                     const folders = result.value.filter(is_folder)
                     return reducePromise(folders, (_,info) => {
                         const folder = Path.join(target, info.name)
-                        return new Promise( resolve => FS.mkdir(folder, _ => resolve(folder)) )
+                        return FS.mkdir(folder)
                             .then(folder => cp_paged(sanitize(absolute(info)) + '/children', folder))
                     })
                 })
@@ -595,7 +574,7 @@ function loginUrl() {
 function login(args) {
     const token = args.pop()
     if (typeof token === 'string') {
-        return writeFile(TOKEN_PATH, token)
+        return FS.writeFile(TOKEN_PATH, token)
             .then(_ => 'Access token was saved to '+TOKEN_PATH)
     }
     else {
