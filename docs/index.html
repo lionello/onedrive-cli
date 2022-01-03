@@ -7,6 +7,12 @@
 <p>The provided <code>shell.nix</code> for the <a href="https://nixos.org">Nix</a> package manager contains all development dependencies.
 Use it with <code>nix-shell</code> or <a href="https://direnv.net">Direnv</a>&#39;s <code>use nix</code>.</p>
 
+<h3>Update Nix files</h3>
+
+<p><code>sh
+node2nix -l package-lock.json
+</code></p>
+
 <h2>Installation</h2>
 
 <p>From source:
@@ -36,7 +42,7 @@ nix-env -if https://github.com/lionello/onedrive-cli/archive/master.tar.gz -A pa
 * <code>chmod</code> - change sharing permissions
 * <code>cp</code> - copies local file(s) to OneDrive or vice-versa
 * <code>df</code> - shows OneDrive storage usage stats
-* <code>find</code> - return remote filename(s), optionally separated by NUL
+* <code>find</code> - find file(s) or folder(s) by name, optionally separated by <code>NUL</code>
 * <code>help</code> - shows list of supported commands
 * <code>ln</code> - create a link to the remote item
 * <code>login</code> - request/store an OAuth access token
@@ -108,15 +114,17 @@ shares to <em>read</em>-only, whereas the latter removes all shares for the give
 
 <ul>
 <li>Implement <code>rm</code></li>
-<li>Register with NPM</li>
 <li>Support gzip/deflate encoding for downloads</li>
 <li>Uploads larger than 100MiB are not yet supported (needs range API)</li>
 <li>Support OneDrive for Business</li>
 <li>Ability to get the link for a file</li>
+<li>Skip upload/download if the SHA1 matches</li>
+<li>Use XDG path spec for token file (https://specifications.freedesktop.org/basedir-spec/basedir-spec-latest.html)</li>
 </ul>
 
 <h2>DONE</h2>
 
 <ul>
+<li>Register with NPM (<a href="https://www.npmjs.com/package/@lionello/onedrive-cli">@lionello/onedrive-cli</a>)</li>
 <li>Fixed OAuth redirect on Safari (https://bugs.webkit.org/show_bug.cgi?id=24175)</li>
 </ul>

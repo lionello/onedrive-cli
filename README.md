@@ -5,6 +5,11 @@ Cross-platform command line interface for OneDrive (Personal)
 The provided `shell.nix` for the [Nix](https://nixos.org) package manager contains all development dependencies.
 Use it with `nix-shell` or [Direnv](https://direnv.net)'s `use nix`.
 
+### Update Nix files
+```sh
+node2nix -l package-lock.json
+```
+
 ## Installation
 From source:
 ```sh
@@ -32,7 +37,7 @@ This little utility supports the following commands:
 * `chmod` - change sharing permissions
 * `cp` - copies local file(s) to OneDrive or vice-versa
 * `df` - shows OneDrive storage usage stats
-* `find` - return remote filename(s), optionally separated by NUL
+* `find` - find file(s) or folder(s) by name, optionally separated by `NUL`
 * `help` - shows list of supported commands
 * `ln` - create a link to the remote item
 * `login` - request/store an OAuth access token
@@ -89,11 +94,13 @@ shares to *read*-only, whereas the latter removes all shares for the given item(
 
 ## TODO
 * Implement `rm`
-* Register with NPM
 * Support gzip/deflate encoding for downloads
 * Uploads larger than 100MiB are not yet supported (needs range API)
 * Support OneDrive for Business
 * Ability to get the link for a file
+* Skip upload/download if the SHA1 matches
+* Use XDG path spec for token file (https://specifications.freedesktop.org/basedir-spec/basedir-spec-latest.html)
 
 ## DONE
+* Register with NPM ([@lionello/onedrive-cli](https://www.npmjs.com/package/@lionello/onedrive-cli))
 * Fixed OAuth redirect on Safari (https://bugs.webkit.org/show_bug.cgi?id=24175)
