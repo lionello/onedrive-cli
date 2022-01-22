@@ -27,7 +27,7 @@
         "colors": "^1.1.2",
         "mime": "^1.6.0",
         "moment": "^2.29.1",
-        "node-fetch": "^2.6.1"
+        "node-fetch": "^3.1.1"
     },
     "devDependencies": {
         "eslint": "^8.6.0",
