@@ -1,10 +1,11 @@
 {
     "name": "@lionello/onedrive-cli",
-    "version": "1.0.6",
+    "version": "1.0.7",
     "description": "OneDrive CLI",
     "bin": "bin/onedrive",
     "scripts": {
         "lint": "npx eslint bin/onedrive",
+        "node2nix": "node2nix -l package-lock.json -14",
         "readme": "redcarpet README.md >docs/index.html"
     },
     "keywords": [
@@ -30,8 +31,8 @@
         "node-fetch": "^2.6.1"
     },
     "devDependencies": {
-        "eslint": "^8.6.0",
-        "prettier": "^2.5.1"
+        "eslint": "^8.21.0",
+        "prettier": "^2.7.1"
     },
     "prettier": {
         "semi": false,

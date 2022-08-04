@@ -99,8 +99,10 @@ shares to *read*-only, whereas the latter removes all shares for the given item(
 * Support OneDrive for Business
 * Ability to get the link for a file
 * Skip upload/download if the SHA1 matches
-* Use XDG path spec for token file (https://specifications.freedesktop.org/basedir-spec/basedir-spec-latest.html)
+* Adding write permissions (+w) to existing share links
 
 ## DONE
 * Register with NPM ([@lionello/onedrive-cli](https://www.npmjs.com/package/@lionello/onedrive-cli))
 * Fixed OAuth redirect on Safari (https://bugs.webkit.org/show_bug.cgi?id=24175)
+* Use XDG path spec for token file (https://specifications.freedesktop.org/basedir-spec/basedir-spec-latest.html)
+* Using `async`/`await`

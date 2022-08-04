@@ -9,7 +9,8 @@ const Moment = require('moment')
 const Path = require('path')
 const Zlib = require('zlib')
 
-const TOKEN_PATH = Path.join(require('os').homedir(), '.onedrive-cli-token')
+// The $XDG_STATE_HOME directory contains state data that should persist between (application) restarts.
+const TOKEN_PATH = Path.join(process.env.XDG_STATE_HOME || require('os').homedir(), '.onedrive-cli-token')
 const API_BASE_URL = 'https://api.onedrive.com/v1.0'
 
 const httpsAgent = new Https.Agent({ keepAlive: true })
@@ -18,17 +19,22 @@ function makeAbsolute(url) {
     return url.startsWith('https://') ? url : API_BASE_URL + url
 }
 
-function checkResponse(response) {
+async function checkResponse(response) {
+    debugPrint(response.status, response.statusText)
+    const location = response.headers.get('location')
+    if (response.status === 202 && location) {
+        const locationURL = new URL(location, response.url)
+        console.warn(Colors.yellow('GET'), locationURL.href)
+        response = await fetch(locationURL)
+    }
     if (!response.ok) {
         const contentType = response.headers.get('content-type') || ''
         if (!contentType.startsWith('application/json')) {
-            return response.text().then(msg => {
-                throw new Error(msg)
-            })
+            const msg = await response.text()
+            throw Error(msg)
         }
-        return response.json().then(json => {
-            throw json.error
-        })
+        const json = await response.json()
+        throw json.error
     }
     return response
 }
@@ -36,13 +42,6 @@ function checkResponse(response) {
 function sha1hash(data) {
     const sha1 = Crypto.createHash('sha1').update(data).digest('hex')
     return sha1
-}
-
-function reducePromise(array, cb, init) {
-    return array.reduce(
-        (prevp, val, index) => prevp.then(p => cb(p, val, index, array)),
-        Promise.resolve(init)
-    )
 }
 
 function padLeft(str, len) {
@@ -53,10 +52,15 @@ function padRight(str, len) {
     return str + ' '.repeat(len - str.length)
 }
 
+function debugPrint(...data) {
+    if (process.stdout.isTTY && process.env.NODE_ENV === 'development') {
+        console.debug(...data)
+    }
+}
+
 function print(data) {
-    return new Promise((resolve, reject) => {
-        process.stdout.write(data, err => (err ? reject(err) : resolve()))
-    })
+    // FIXME: handle false return value by hooking the drain event
+    process.stdout.write(data)
 }
 
 function humanize(num) {
@@ -75,70 +79,60 @@ function prettyPrint(num) {
     return padLeft(humanize(num), 6)
 }
 
-var lazyToken = function () {
-    return FS.readFile(TOKEN_PATH).then(buffer => {
-        const token = Promise.resolve(buffer.toString())
-        // Next time we're invoked, simply return the resolved promise
-        lazyToken = function () {
-            return token
-        }
+var lazyToken = async function () {
+    const buffer = await FS.readFile(TOKEN_PATH)
+    const token = Promise.resolve(buffer.toString())
+    // Next time we're invoked, simply return the resolved promise
+    lazyToken = function () {
         return token
-    })
+    }
+    return token
 }
 
-function call(url, method, body, mime) {
-    return lazyToken().then(token => {
-        const options = {
-            agent: httpsAgent,
-            body: body,
-            method: method || 'GET',
-            headers: {
-                Authorization: 'bearer ' + token,
-                'Content-Type': mime || 'application/octet-stream',
-                Accept: 'application/json',
-            },
-        }
-        if (process.stdout.isTTY) {
-            console.warn(Colors.yellow(options.method), decodeURIComponent(url))
-        }
+async function call(url, method, body, headers = {}) {
+    const token = await lazyToken()
+    const options = {
+        agent: httpsAgent,
+        body: body,
+        method: method || 'GET',
+        headers: {
+            Authorization: 'bearer ' + token,
+            'Content-Type': 'application/octet-stream',
+            Accept: 'application/json',
+            ...headers
+        },
+    }
+    if (process.stdout.isTTY) {
+        console.warn(Colors.yellow(options.method), decodeURIComponent(url))
+    }
 
-        if (body instanceof Buffer) {
-            options.body = Zlib.gzipSync(body)
-            options.headers['Content-Encoding'] = 'gzip'
-        } else if (typeof body === 'object') {
-            if ('@content.sourceUrl' in body) {
-                options.headers.Prefer = 'respond-async'
-            }
-            options.body = JSON.stringify(body)
-            options.headers['Content-Type'] = 'application/json'
-        }
+    if (body instanceof Buffer) {
+        options.body = Zlib.gzipSync(body)
+        options.headers['Content-Encoding'] = 'gzip'
+    } else if (typeof body === 'object') {
+        options.body = JSON.stringify(body)
+        options.headers['Content-Type'] = 'application/json'
+    }
 
-        return fetch(makeAbsolute(url), options)
-            .then(checkResponse)
-            .then(data => {
-                return data.json()
-            })
-    })
+    const resp = await fetch(makeAbsolute(url), options)
+    const data = await checkResponse(resp)
+    return data.json()
 }
 
-function getContent(url) {
+async function getContent(url) {
     if (process.stdout.isTTY) {
         console.warn(Colors.yellow('GET'), decodeURIComponent(url))
     }
 
-    return lazyToken()
-        .then(token =>
-            fetch(makeAbsolute(url), {
-                agent: httpsAgent,
-                headers: {
-                    Authorization: 'bearer ' + token,
-                },
-            })
-        )
-        .then(checkResponse)
-        .then(data => {
-            return data.buffer()
+    const token = await lazyToken()
+    const resp = await fetch(makeAbsolute(url), {
+            agent: httpsAgent,
+            headers: {
+                Authorization: 'bearer ' + token,
+            },
         })
+    const data = await checkResponse(resp)
+    return data.buffer()
 }
 
 function sanitize(remote) {
@@ -162,94 +156,92 @@ function absolute(info) {
 Filesystem         Size   Used  Avail Capacity Deleted
 dc1e3335a482dc20 1214Gi  164Gi 1050Gi      14%   780Mi
 */
-function df() {
-    return call('/drives').then(result => {
-        console.log(
-            Colors.bold(
-                'Drive              Size   Used  Avail Capacity Deleted Status'
-            )
+async function df() {
+    const result = await call('/drives')
+    console.log(
+        Colors.bold(
+            'Drive              Size   Used  Avail Capacity Deleted Status'
         )
-        for (const drive of result.value) {
-            const capacity =
-                Math.round((drive.quota.used * 100) / drive.quota.total) + '% '
-            console.log(
-                padRight(drive.id, 16),
-                prettyPrint(drive.quota.total),
-                prettyPrint(drive.quota.used),
-                prettyPrint(drive.quota.remaining),
-                padLeft(capacity, 9),
-                prettyPrint(drive.quota.deleted),
-                drive.status.state
-            )
-        }
-    })
+    )
+    for (const drive of result.value) {
+        const capacity =
+            Math.round((drive.quota.used * 100) / drive.quota.total) + '% '
+        console.log(
+            padRight(drive.id, 16),
+            prettyPrint(drive.quota.total),
+            prettyPrint(drive.quota.used),
+            prettyPrint(drive.quota.remaining),
+            padLeft(capacity, 9),
+            prettyPrint(drive.quota.deleted),
+            drive.status.state
+        )
+    }
 }
 
-function ls_paged(total, cont) {
+async function ls_paged(total, cont) {
     if (cont === undefined) {
         return total
     }
 
-    return call(cont).then(result => {
-        const now = Moment()
-        const threshold = 1000 * 60 * 60 * 24 * 180 //180days
-        for (const f of result.value) {
-            const m = Moment(f.lastModifiedDateTime)
-            const d = 'folder' in f
-            let mod = d ? 'drwx' : '-rw-'
-            if ('shared' in f) {
-                if (
-                    'effectiveRoles' in f.shared &&
-                    f.shared.effectiveRoles.length === 1 &&
-                    f.shared.effectiveRoles[0] === 'read'
-                ) {
+    const result = await call(cont)
+    const now = Moment()
+    const threshold = 1000 * 60 * 60 * 24 * 180 //180days
+    for (const f of result.value) {
+        const m = Moment(f.lastModifiedDateTime)
+        const d = 'folder' in f
+        let mod = d ? 'drwx' : '-rw-'
+        if ('shared' in f) {
+            if (
+                'effectiveRoles' in f.shared &&
+                f.shared.effectiveRoles.length === 1 &&
+                f.shared.effectiveRoles[0] === 'read'
+            ) {
+                mod += d ? 'r-x' : 'r--'
+                if (f.shared.scope === 'anonymous') {
                     mod += d ? 'r-x' : 'r--'
-                    if (f.shared.scope === 'anonymous') {
-                        mod += d ? 'r-x' : 'r--'
-                    } else {
-                        mod += '---'
-                    }
                 } else {
-                    mod += d ? 'rwx' : 'rw-'
-                    if (f.shared.scope === 'anonymous') {
-                        mod += d ? 'rwx' : 'rw-'
-                    } else {
-                        mod += '---'
-                    }
+                    mod += '---'
                 }
             } else {
-                mod += '------'
+                mod += d ? 'rwx' : 'rw-'
+                if (f.shared.scope === 'anonymous') {
+                    mod += d ? 'rwx' : 'rw-'
+                } else {
+                    mod += '---'
+                }
             }
-            const count = d ? f.folder.childCount : 1
-            total += count
-            console.log(
-                mod,
-                padLeft(count, 3),
-                f.createdBy.user.displayName,
-                padLeft(f.size, 10),
-                m.format(
-                    Math.abs(now - m) < threshold
-                        ? 'MMM DD HH:mm'
-                        : 'MMM DD  YYYY'
-                ),
-                d ? Colors.bold(Colors.blue(f.name)) + '/' : f.name
-            )
+        } else {
+            mod += '------'
         }
-        return ls_paged(total, result['@odata.nextLink'])
-    })
+        const count = d ? f.folder.childCount : 1
+        total += count
+        console.log(
+            mod,
+            padLeft(count, 3),
+            f.createdBy.user.displayName,
+            padLeft(f.size, 10),
+            m.format(
+                Math.abs(now - m) < threshold
+                    ? 'MMM DD HH:mm'
+                    : 'MMM DD  YYYY'
+            ),
+            d ? Colors.bold(Colors.blue(f.name)) + '/' : f.name
+        )
+    }
+    return ls_paged(total, result['@odata.nextLink'])
 }
 
-function ls(folders) {
+async function ls(folders) {
     if (folders.length === 0) {
         folders = ['']
     }
 
     //console.log(Colors.bold('Permission Cnt Owner            Size     Date         Name'))
-    return reducePromise(
-        folders,
-        (prev, folder) => ls_paged(prev, sanitize(folder) + '/children'),
-        0
-    ).then(result => 'total ' + result)
+    let result = 0
+    for (const folder of folders) {
+        result = await ls_paged(result, sanitize(folder) + '/children')
+    }
+    return 'total ' + result
 }
 
 const MOVE = 'move'
@@ -259,47 +251,43 @@ const COPY = 'copy'
 PUT /drive/root:/{parent-path}/{filename}:/content
 @name.conflictBehavior   fail, replace (def), or rename.
 */
-function upload(op, from, target) {
+async function upload(op, from, target) {
     if (from.endsWith('/')) {
-        throw new Error('Invalid source name')
+        throw Error('Invalid source name')
     }
     if (target.endsWith('/')) {
         target = target + Path.basename(from)
     }
     target = sanitize(target)
     const mime = Mime.lookup(from)
-    return FS.readFile(from)
-        .then(data => {
-            // TODO: skip upload if SHA1 is the same
-            return call(
-                target + '/content?@name.conflictBehavior=fail',
-                'PUT',
-                data,
-                mime
-            ).then(result => {
-                const sha1 = sha1hash(data).toUpperCase()
-                if (sha1 !== result.file.hashes.sha1Hash) {
-                    throw new Error('sha1Hash mismatch: ' + target)
-                }
-                return result
-            })
-        })
-        .then(result => {
-            if (op === MOVE) {
-                console.log(from, '=>', target, result.id)
-                return FS.unlink(from)
-            } else {
-                console.log(from, '->', target, result.id)
-            }
-        })
-        .catch(err => {
-            if (err.statusCode === 404) {
-                return console.error(
-                    'Skipped. Uploads larger than 100MiB are not yet supported.'
-                )
-            }
-            throw err
-        })
+    const data = await FS.readFile(from)
+    // TODO: skip upload if SHA1 is the same
+    const result = await call(
+        target + '/content?@name.conflictBehavior=fail',
+        'PUT',
+        data,
+        { 'Content-Type': mime }
+    )
+    const sha1 = sha1hash(data).toUpperCase()
+    if (sha1 !== result.file.hashes.sha1Hash) {
+        throw Error('sha1Hash mismatch: ' + target)
+    }
+    try {
+        if (op === MOVE) {
+            console.log(from, '=>', target, result.id)
+            await FS.unlink(from)
+        } else {
+            console.log(from, '->', target, result.id)
+        }
+    }
+    catch(err) {
+        if (err.statusCode === 404) {
+            return console.error(
+                'Skipped. Uploads larger than 100MiB are not yet supported.'
+            )
+        }
+        throw err
+    }
 }
 
 /*
@@ -313,7 +301,7 @@ Prefer: respond-async
   "file": { }
 }
 */
-function wget(args) {
+async function wget(args) {
     if (args.length !== 2) {
         console.error('usage: wget url target')
     } else {
@@ -325,23 +313,22 @@ function wget(args) {
             file: {},
         }
         if (data.name === '' || target.endsWith('/')) {
-            throw new Error('Invalid target name')
+            throw Error('Invalid target name')
         }
         let path = Path.dirname(target + 'hack')
         target = sanitize(target)
         path = sanitize(path)
-        return call(path + '/children', 'POST', data).then(() => {
-            console.log(from, '-->', target)
-        })
+        await call(path + '/children', 'POST', data, { Prefer: 'respond-async'})
+        console.log(from, '-->', target)
     }
 }
 
 /*
 GET /drive/root:/{path and filename}:/content
 */
-function download(op, from, target) {
+async function download(op, from, target) {
     if (from.endsWith('/')) {
-        throw new Error('Invalid source name')
+        throw Error('Invalid source name')
     }
     if (target === undefined || target === '.' || target === '') {
         target = './'
@@ -351,16 +338,14 @@ function download(op, from, target) {
     }
     from = sanitize(from)
     // TODO: avoid download if the SHA1 is the same
-    return getContent(from + '/content')
-        .then(data => FS.writeFile(target, data))
-        .then(() => {
-            if (op === MOVE) {
-                console.log(from, '=>', target)
-                return rm(from)
-            } else {
-                console.log(from, '->', target)
-            }
-        })
+    const data = await getContent(from + '/content')
+    await FS.writeFile(target, data)
+    if (op === MOVE) {
+        console.log(from, '=>', target)
+        return rm(from)
+    } else {
+        console.log(from, '->', target)
+    }
 }
 
 /*
@@ -385,85 +370,86 @@ function moveItem(item, path, name) {
     return call(remote, 'PATCH', data)
 }
 
-function rename(from, target) {
+async function rename(from, target) {
     if (from.endsWith('/')) {
-        throw new Error('Invalid source name')
+        throw Error('Invalid source name')
     }
     if (target.endsWith('/')) {
         target = target + Path.basename(from)
     }
     const parent = Path.dirname(target)
     const name = Path.basename(target)
-    return moveItem(from, parent, name).then(() => {
-        console.log(`renamed '${from}' -> '${target}'`)
-    })
+    await moveItem(from, parent, name)
+    console.log(`renamed '${from}' -> '${target}'`)
 }
 
-function cp_mv(op, args, target) {
+async function cp_mv(op, args, target) {
     if (args.length === 0) {
-        return Promise.resolve()
+        return
     }
 
     if (args.length > 1 && !target.endsWith('/')) {
-        throw new Error('Target is not a directory')
+        throw Error('Target is not a directory')
     }
 
     if (args[0].startsWith('./') && target.startsWith('./')) {
-        throw new Error(`Local ${op} is not implemented.`)
+        throw Error(`Local ${op} is not implemented.`)
     }
 
     if (args[0].startsWith(':/') && target.startsWith(':/')) {
         if (op !== MOVE) {
-            throw new Error(`Remote ${op} is not implemented.`)
+            throw Error(`Remote ${op} is not implemented.`)
         }
         // from onedrive to onedrive
-        return reducePromise(args, (_, cur) => rename(cur, target))
+        for (const cur of args) {
+            await rename(cur, target)
+        }
     }
 
     if (args[0].startsWith('./') || target.startsWith(':/')) {
         // from local to onedrive
-        return reducePromise(args, (_, cur) => upload(op, cur, target))
+        for (const cur of args) {
+            await upload(op, cur, target)
+        }
     } else if (
         args[0].startsWith(':/') ||
         target.startsWith('./') ||
         target === '.'
     ) {
         // from onedrive to local
-        return reducePromise(args, (_, cur) => download(op, cur, target))
+        for (const cur of args) {
+            await download(op, cur, target)
+        }
     } else {
-        throw new Error('Use ./ or :/ path prefix for local or remote paths.')
+        throw Error('Use ./ or :/ path prefix for local or remote paths.')
     }
 }
 
-function cp_paged(cont, target) {
+async function cp_paged(cont, target) {
     if (cont === undefined) {
         return
     }
-    return call(cont).then(result => {
-        // TODO: copy by Item ID instead of path?
-        const files = result.value
-            .filter(info => !is_folder(info))
-            .map(absolute)
-        return cp_mv(COPY, files, target + '/')
-            .then(() => cp_paged(result['@odata.nextLink'], target))
-            .then(() => {
-                // Recurse into subfolders
-                const folders = result.value.filter(is_folder)
-                return reducePromise(folders, (_, info) => {
-                    const folder = Path.join(target, info.name)
-                    return FS.mkdir(folder).then(folder =>
-                        cp_paged(sanitize(absolute(info)) + '/children', folder)
-                    )
-                })
-            })
-    })
+    const result = await call(cont)
+    // TODO: copy by Item ID instead of path?
+    const files = result.value
+        .filter(info => !is_folder(info))
+        .map(absolute)
+    await cp_mv(COPY, files, target + '/')
+    await cp_paged(result['@odata.nextLink'], target)
+    // Recurse into subfolders
+    const folders = result.value.filter(is_folder)
+    for (const info of folders) {
+        const folder = Path.join(target, info.name)
+        await FS.mkdir(folder)
+        await cp_paged(sanitize(absolute(info)) + '/children', folder)
+    }
 }
 
 function is_folder(info) {
     return info.folder || (info.package && info.package.type === 'oneNote')
 }
 
-function cp(args) {
+async function cp(args) {
     if (args.length < 2) {
         console.error('usage: cp [-R] source target')
         console.error('       cp [-R] source ... directory')
@@ -480,9 +466,9 @@ function cp(args) {
         }
 
         // Recursive copy
-        return reducePromise(args.slice(1), (_, folder) =>
-            cp_paged(sanitize(folder) + '/children', target)
-        )
+        for (const folder of args) {
+            await cp_paged(sanitize(folder) + '/children', target)
+        }
     }
 }
 
@@ -490,7 +476,7 @@ function rm(args) {
     if (args.length < 1) {
         console.error('usage: rm file ...')
     } else {
-        throw new Error('Remote rm is not implemented')
+        throw Error('Remote rm is not implemented')
     }
 }
 
@@ -528,32 +514,36 @@ function createFolder(parent, name) {
     return call(remote + '/children', 'POST', data)
 }
 
-function mkdir1(dir) {
+async function mkdir1(dir) {
     const parent = Path.dirname(dir)
     const name = Path.basename(dir)
-    return createFolder(parent, name).then(result => {
-        console.log(`mkdir: created directory '${result.name}'`)
-    })
+    const result = await createFolder(parent, name)
+    console.log(`mkdir: created directory '${result.name}'`)
 }
 
-function mkdir(args) {
+async function mkdir(args) {
     if (args.length < 1) {
         console.error('usage: mkdir directory_name ...')
     } else {
-        return reducePromise(args, (_, cur) => mkdir1(cur))
+        for (const cur of args) {
+            await mkdir1(cur)
+        }
     }
 }
 
-function cat1(remote) {
+async function cat1(remote) {
     remote = sanitize(remote)
-    return getContent(remote + '/content').then(data => print(data))
+    const data = await getContent(remote + '/content')
+    print(data)
 }
 
-function cat(args) {
+async function cat(args) {
     if (args.length < 1) {
         console.error('usage: cat file ...')
     } else {
-        return reducePromise(args, (_, cur) => cat1(cur))
+        for (const cur of args) {
+            await cat1(cur)
+        }
     }
 }
 
@@ -566,62 +556,62 @@ function loginUrl() {
     )
 }
 
-function login(args) {
+async function login(args) {
     const token = args.pop()
     if (typeof token === 'string') {
-        return FS.writeFile(TOKEN_PATH, token).then(
-            () => 'Access token was saved to ' + TOKEN_PATH
-        )
+        await FS.writeFile(TOKEN_PATH, token)
+        return 'Access token was saved to ' + TOKEN_PATH
     } else {
         console.error('usage: login access_token')
         loginUrl()
     }
 }
 
-function ln(args) {
+async function ln(args) {
     if (args.length !== 1) {
         console.error('usage: ln file')
     } else {
         const remote = sanitize(args[0])
-        return call(remote + '/action.createLink', 'POST', {
+        const result = await call(remote + '/action.createLink', 'POST', {
             type: 'view',
-        }).then(result => {
-            console.log(Colors.underline(result.link.webUrl))
         })
+        console.log(Colors.underline(result.link.webUrl))
     }
 }
 
-function chmod1(mode, remote) {
+const MINUS_W = '-w'
+const MINUS_RW = '-rw'
+
+async function chmod1(mode, remote) {
     remote = sanitize(remote)
-    return call(remote + '/permissions')
-        .then(result => {
-            // +w  x        POST (todo)
-            // +w  read     PATCH (todo)
-            // +w  write    NOP
-            // -w  write    PATCH
-            // -w  read     NOP
-            // -rw write    DELETE
-            // -rw read     DELETE
-            return reducePromise(result.value, (_, cur) => {
-                if (mode === '-rw') {
-                    return call(
-                        '/drive/root' + remote + ':/permissions/' + cur.id,
-                        'DELETE'
-                    )
-                } else if (cur.roles[0] === 'write') {
-                    // FIXME: generic 'edit' links cannot be patched to be read only
-                    return call(
-                        '/drive/root' + remote + ':/permissions/' + cur.id,
-                        'PATCH',
-                        { roles: ['read'] }
-                    )
-                }
-            })
-        })
-        .then(s => (s === null ? 'OK' : 'Nothing was changed'))
+    const result = await call(remote + '/permissions')
+    // +w  x        POST (TODO)
+    // +w  read     PATCH (TODO)
+    // +w  write    NOP
+    // -w  write    PATCH
+    // -w  read     NOP
+    // -rw write    DELETE
+    // -rw read     DELETE
+    let ok // FIXME track result from all shares
+    for (const cur of result.value) {
+        if (mode === MINUS_RW) {
+            ok = await call(
+                '/drive/root' + remote + ':/permissions/' + cur.id,
+                'DELETE'
+            )
+        } else if (cur.roles[0] === 'write') {
+            // FIXME: generic 'edit' links cannot be patched to be read only
+            ok = await call(
+                '/drive/root' + remote + ':/permissions/' + cur.id,
+                'PATCH',
+                { roles: ['read'] }
+            )
+        }
+    }
+    return ok ? 'OK' : 'Nothing was changed'
 }
 
-function chmod(args) {
+async function chmod(args) {
     if (args.length < 2) {
         console.error('usage: chmod mode file ...')
     } else {
@@ -636,7 +626,7 @@ function chmod(args) {
             case 'go-rw':
             case 'og-rw':
             case '-rw':
-                mode = '-rw'
+                mode = MINUS_RW
                 break
 
             case '0644':
@@ -648,7 +638,7 @@ function chmod(args) {
             case 'go-w':
             case 'og-w':
             case '-w':
-                mode = '-w'
+                mode = MINUS_W
                 break
 
             default:
@@ -656,11 +646,13 @@ function chmod(args) {
                 return
         }
 
-        return reducePromise(args.slice(1), (_, cur) => chmod1(mode, cur))
+        for (const cur of args.slice(1)) {
+            await chmod1(mode, cur)
+        }
     }
 }
 
-function sendmail1(email, file) {
+async function sendmail1(email, file) {
     const payload = {
         requireSignIn: 'true',
         sendInvitation: 'true',
@@ -669,17 +661,18 @@ function sendmail1(email, file) {
         // "message": "You were invited by x to access y"
     }
     const remote = sanitize(file)
-    return call(remote + '/action.invite', 'POST', payload).then(result => {
-        console.log(JSON.stringify(result, undefined, 2))
-    })
+    const result = await call(remote + '/action.invite', 'POST', payload)
+    console.log(JSON.stringify(result, undefined, 2))
 }
 
-function sendmail(args) {
+async function sendmail(args) {
     if (args.length < 2) {
         console.error('usage: sendmail file recipient ...')
     } else {
         const file = args[0]
-        return reducePromise(args.slice(1), (_, cur) => sendmail1(cur, file))
+        for (const cur of args.slice(1)) {
+            await sendmail1(cur, file)
+        }
     }
 }
 
@@ -688,49 +681,45 @@ function getItem(file) {
     return call(remote)
 }
 
-function stat1(file) {
-    return getItem(file).then(result => {
-        console.log(JSON.stringify(result, undefined, 2))
-    })
+async function stat1(file) {
+    const result = await getItem(file)
+    console.log(JSON.stringify(result, undefined, 2))
 }
 
-function stat(args) {
+async function stat(args) {
     if (args.length === 0) {
         args = ['']
     }
-    return reducePromise(args, (_, cur) => stat1(cur))
+    for (const cur of args) {
+        await stat1(cur)
+    }
 }
 
-function find_paged(cont, expression) {
+async function find_paged(cont, expression) {
     if (cont === undefined) {
-        return Promise.resolve()
+        return
     }
-    return call(cont).then(result => {
-        result.value
-            .filter(info => expression.dirOnly !== !info.folder)
-            .filter(
-                info => !expression.regex || expression.regex.test(info.name)
-            )
-            .map(absolute)
-            .forEach(file => {
-                if (expression.print0) {
-                    process.stdout.write(file)
-                    process.stdout.write('\0')
-                } else {
-                    console.log(file)
-                }
-            })
-        return find_paged(result['@odata.nextLink'], expression).then(() => {
-            // Recurse into subfolders
-            const folders = result.value.filter(info => info.folder)
-            return reducePromise(folders, (_, info) => {
-                return find_paged(
-                    sanitize(absolute(info)) + '/children',
-                    expression
-                )
-            })
+    const result = await call(cont)
+    result.value
+        .filter(info => expression.dirOnly !== !info.folder)
+        .filter(
+            info => !expression.regex || expression.regex.test(info.name)
+        )
+        .map(absolute)
+        .forEach(file => {
+            if (expression.print0) {
+                process.stdout.write(file)
+                process.stdout.write('\0')
+            } else {
+                console.log(file)
+            }
         })
-    })
+    await find_paged(result['@odata.nextLink'], expression)
+    // Recurse into subfolders
+    const folders = result.value.filter(info => info.folder)
+    for (const info of folders) {
+        await find_paged(sanitize(absolute(info)) + '/children', expression)
+    }
 }
 
 function globToRegExp(glob, flags) {
@@ -741,7 +730,7 @@ function globToRegExp(glob, flags) {
     return new RegExp('^' + regex + '$', flags)
 }
 
-function find(args) {
+async function find(args) {
     if (args.length === 0) {
         console.error(
             'usage: find path ... [-print0] [-name GLOB] [-iname GLOB] [-regex REGEX] [-iregex REGEX] [-type d|f]'
@@ -776,13 +765,13 @@ function find(args) {
                     index++
             }
         }
-        return reducePromise(args, (_, folder) =>
-            find_paged(sanitize(folder) + '/children', expression)
-        )
+        for (const folder of args) {
+            await find_paged(sanitize(folder) + '/children', expression)
+        }
     }
 }
 
-function main(argv) {
+async function main(argv) {
     // Disable colors when piping to another command
     if (!process.env.FORCE_COLOR && !process.stdout.isTTY) {
         Colors.disable()
@@ -844,19 +833,18 @@ function main(argv) {
             return wget(argv.slice(3))
 
         default:
-            throw new Error('Unknown command: ' + argv[2])
+            throw Error('Unknown command: ' + argv[2])
     }
 }
 
-Promise.resolve()
-    .then(() => main(process.argv))
+main(process.argv)
     .then(result => {
         if (result !== undefined) {
             console.log(Colors.green(result))
         }
-    })
-    .catch(err => {
+    }, err => {
         console.error(Colors.red(err.localizedMessage || err.message))
+        debugPrint(err)
         // Special error handling case for fatal login failures
         if (err.statusCode === 401 || err.path === TOKEN_PATH) {
             loginUrl()
