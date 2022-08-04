@@ -10,7 +10,10 @@ const Path = require('path')
 const Zlib = require('zlib')
 
 // The $XDG_STATE_HOME directory contains state data that should persist between (application) restarts.
-const TOKEN_PATH = Path.join(process.env.XDG_STATE_HOME || require('os').homedir(), '.onedrive-cli-token')
+const TOKEN_PATH = Path.join(
+    process.env.XDG_STATE_HOME || require('os').homedir(),
+    '.onedrive-cli-token'
+)
 const API_BASE_URL = 'https://api.onedrive.com/v1.0'
 
 const httpsAgent = new Https.Agent({ keepAlive: true })
@@ -99,7 +102,7 @@ async function call(url, method, body, headers = {}) {
             Authorization: 'bearer ' + token,
             'Content-Type': 'application/octet-stream',
             Accept: 'application/json',
-            ...headers
+            ...headers,
         },
     }
     if (process.stdout.isTTY) {
@@ -126,11 +129,11 @@ async function getContent(url) {
 
     const token = await lazyToken()
     const resp = await fetch(makeAbsolute(url), {
-            agent: httpsAgent,
-            headers: {
-                Authorization: 'bearer ' + token,
-            },
-        })
+        agent: httpsAgent,
+        headers: {
+            Authorization: 'bearer ' + token,
+        },
+    })
     const data = await checkResponse(resp)
     return data.buffer()
 }
@@ -221,9 +224,7 @@ async function ls_paged(total, cont) {
             f.createdBy.user.displayName,
             padLeft(f.size, 10),
             m.format(
-                Math.abs(now - m) < threshold
-                    ? 'MMM DD HH:mm'
-                    : 'MMM DD  YYYY'
+                Math.abs(now - m) < threshold ? 'MMM DD HH:mm' : 'MMM DD  YYYY'
             ),
             d ? Colors.bold(Colors.blue(f.name)) + '/' : f.name
         )
@@ -279,8 +280,7 @@ async function upload(op, from, target) {
         } else {
             console.log(from, '->', target, result.id)
         }
-    }
-    catch(err) {
+    } catch (err) {
         if (err.statusCode === 404) {
             return console.error(
                 'Skipped. Uploads larger than 100MiB are not yet supported.'
@@ -318,7 +318,9 @@ async function wget(args) {
         let path = Path.dirname(target + 'hack')
         target = sanitize(target)
         path = sanitize(path)
-        await call(path + '/children', 'POST', data, { Prefer: 'respond-async'})
+        await call(path + '/children', 'POST', data, {
+            Prefer: 'respond-async',
+        })
         console.log(from, '-->', target)
     }
 }
@@ -431,9 +433,7 @@ async function cp_paged(cont, target) {
     }
     const result = await call(cont)
     // TODO: copy by Item ID instead of path?
-    const files = result.value
-        .filter(info => !is_folder(info))
-        .map(absolute)
+    const files = result.value.filter(info => !is_folder(info)).map(absolute)
     await cp_mv(COPY, files, target + '/')
     await cp_paged(result['@odata.nextLink'], target)
     // Recurse into subfolders
@@ -702,9 +702,7 @@ async function find_paged(cont, expression) {
     const result = await call(cont)
     result.value
         .filter(info => expression.dirOnly !== !info.folder)
-        .filter(
-            info => !expression.regex || expression.regex.test(info.name)
-        )
+        .filter(info => !expression.regex || expression.regex.test(info.name))
         .map(absolute)
         .forEach(file => {
             if (expression.print0) {
@@ -837,12 +835,13 @@ async function main(argv) {
     }
 }
 
-main(process.argv)
-    .then(result => {
+main(process.argv).then(
+    result => {
         if (result !== undefined) {
             console.log(Colors.green(result))
         }
-    }, err => {
+    },
+    err => {
         console.error(Colors.red(err.localizedMessage || err.message))
         debugPrint(err)
         // Special error handling case for fatal login failures
@@ -853,4 +852,5 @@ main(process.argv)
         } else {
             process.exitCode = 1
         }
-    })
+    }
+)
