@@ -17,7 +17,7 @@
 
     var access_token = /access_token=([^&]+)/.exec(window.location.hash)[1];
     textarea = document.getElementById('token')
-    textarea.value = "onedrive login "+decodeURIComponent(access_token);
+    textarea.value = " onedrive-cli login "+decodeURIComponent(access_token);
     textarea.focus();
 
     document.getElementById('copy').addEventListener('click', click);
