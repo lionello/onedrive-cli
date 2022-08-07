@@ -366,7 +366,7 @@ function moveItem(item, path, name) {
     const data = {
         name: name,
         parentReference: {
-            path: sanitize(path),
+            path: sanitize(path), // FIXME: double escapes
         },
     }
     return call(remote, 'PATCH', data)
@@ -466,7 +466,7 @@ async function cp(args) {
         }
 
         // Recursive copy
-        for (const folder of args) {
+        for (const folder of args.slice(1)) {
             await cp_paged(sanitize(folder) + '/children', target)
         }
     }
