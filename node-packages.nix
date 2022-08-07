@@ -71,7 +71,7 @@ let
   args = {
     name = "_at_lionello_slash_onedrive-cli";
     packageName = "@lionello/onedrive-cli";
-    version = "1.0.7";
+    version = "1.0.8";
     src = ./.;
     dependencies = [
       sources."colors-1.4.0"
