@@ -1,0 +1,35 @@
+#!/bin/bash
+set -x
+ONEDRIVE=bin/onedrive
+F=./test~
+R=:/test~
+$ONEDRIVE cat $F $F
+$ONEDRIVE chmod -w $R $R
+$ONEDRIVE chmod -rw $R $R
+$ONEDRIVE cp $F ./
+$ONEDRIVE cp $F :/
+$ONEDRIVE cp $R $F
+$ONEDRIVE cp -R $F ./
+$ONEDRIVE cp -R $F $F ./
+$ONEDRIVE cp -t ./ $F $F
+$ONEDRIVE df
+$ONEDRIVE find $F
+$ONEDRIVE find $F -print0
+$ONEDRIVE find $F -iname asfd
+$ONEDRIVE find $F -iregex asfd
+$ONEDRIVE help
+$ONEDRIVE ln $R
+$ONEDRIVE login
+$ONEDRIVE ls $R $R
+$ONEDRIVE mkdir $F $F
+$ONEDRIVE mv $R $R $F
+$ONEDRIVE mv $F $F $R
+$ONEDRIVE mv -t $R $F $F
+$ONEDRIVE mv -t $F $R $R
+$ONEDRIVE mv $R $R
+$ONEDRIVE sendmail $R asdf@asf.asdf
+$ONEDRIVE stat
+$ONEDRIVE stat $R $R
+$ONEDRIVE wget https://asdf $R
+$ONEDRIVE rm $R $R
+
