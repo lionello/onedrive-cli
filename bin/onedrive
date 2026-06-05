@@ -472,11 +472,33 @@ async function cp(args) {
     }
 }
 
-function rm(args) {
+/*
+DELETE /drive/root:/{path}:
+Returns 204 No Content on success.
+Supports files and folders (recursive delete).
+*/
+async function rmItem(remote) {
+    remote = sanitize(remote)
+    const token = await lazyToken()
+    const resp = await fetch(makeAbsolute(remote), {
+        agent: httpsAgent,
+        method: 'DELETE',
+        headers: {
+            Authorization: 'bearer ' + token,
+        },
+    })
+    await checkResponse(resp)
+    // 204 No Content on success — nothing to parse
+}
+
+async function rm(args) {
     if (args.length < 1) {
         console.error('usage: rm file ...')
     } else {
-        throw Error('Remote rm is not implemented')
+        for (const cur of args) {
+            await rmItem(cur)
+            console.log(`removed '${cur}'`)
+        }
     }
 }
 
