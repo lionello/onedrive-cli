@@ -567,23 +567,31 @@ async function cat(args) {
     }
 }
 
-function loginUrl() {
+function loginUrl(readonly) {
+    const scope = readonly ? 'onedrive.readonly' : 'onedrive.readwrite'
     console.log(
         '\nBrowse to',
         Colors.underline(
-            'https://login.live.com/oauth20_authorize.srf?client_id=0000000040197E82&scope=onedrive.readwrite&response_type=token&redirect_uri=https%3A%2F%2Fwww.lunesu.com%2Fonedrive-cli%2Foauthcallbackhandler.html'
+            'https://login.live.com/oauth20_authorize.srf?client_id=0000000040197E82&scope=' +
+                scope +
+                '&response_type=token&redirect_uri=https%3A%2F%2Fwww.lunesu.com%2Fonedrive-cli%2Foauthcallbackhandler.html'
         )
     )
 }
 
 async function login(args) {
+    let readonly = false
+    if (args[0] === '-r' || args[0] === '--readonly') {
+        readonly = true
+        args.shift()
+    }
     const token = args.pop()
     if (typeof token === 'string') {
         await FS.writeFile(TOKEN_PATH, token)
         return 'Access token was saved to ' + TOKEN_PATH
     } else {
-        console.error('usage: login access_token')
-        loginUrl()
+        console.error('usage: login [-r|--readonly] [access_token]')
+        loginUrl(readonly)
     }
 }
 
@@ -789,6 +797,30 @@ async function find(args) {
     }
 }
 
+/*
+GET /drive/root/view.search?q={query}
+Server-side search across the whole drive; OneDrive pages the matches for
+us. Note: the API ignores any folder anchor, so search is always global --
+pipe the output to e.g. `grep '^:/folder/'` to limit it to a subtree.
+*/
+async function search_paged(cont) {
+    if (cont === undefined) {
+        return
+    }
+    const result = await call(cont)
+    result.value.map(absolute).forEach(file => console.log(file))
+    await search_paged(result['@odata.nextLink'])
+}
+
+async function search(args) {
+    if (args.length !== 1) {
+        console.error('usage: search query')
+    } else {
+        const query = encodeURIComponent(args[0])
+        await search_paged('/drive/root/view.search?q=' + query)
+    }
+}
+
 async function main(argv) {
     // Disable colors when piping to another command
     if (!process.env.FORCE_COLOR && !process.stdout.isTTY) {
@@ -804,7 +836,7 @@ async function main(argv) {
                 )
             )
             console.log(
-                '\nusage: onedrive COMMAND [arguments]\n\ncommands: cat chmod cp df find help ln login ls mkdir mv rm sendmail stat wget'
+                '\nusage: onedrive COMMAND [arguments]\n\ncommands: cat chmod cp df find help ln login ls mkdir mv rm search sendmail stat wget'
             )
             return
 
@@ -840,6 +872,9 @@ async function main(argv) {
 
         case 'rm':
             return rm(argv.slice(3))
+
+        case 'search':
+            return search(argv.slice(3))
 
         case 'sendmail':
             return sendmail(argv.slice(3))
