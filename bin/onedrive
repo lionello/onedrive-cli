@@ -7,6 +7,7 @@ const Https = require('https')
 const Mime = require('mime')
 const Moment = require('moment')
 const Path = require('path')
+const Readline = require('readline')
 const Zlib = require('zlib')
 
 // The $XDG_STATE_HOME directory contains state data that should persist between (application) restarts.
@@ -569,14 +570,41 @@ async function cat(args) {
 
 function loginUrl(readonly) {
     const scope = readonly ? 'onedrive.readonly' : 'onedrive.readwrite'
+    // Round-trip our own command name (e.g. 'onedrive' vs 'onedrive-cli') via
+    // the OAuth `state` param so the landing page can show the right command.
+    // (state is carried back verbatim; appending to redirect_uri instead would
+    // risk failing the provider's redirect-URI matching.)
+    const cmd = Path.basename(process.argv[1] || 'onedrive-cli')
     console.log(
         '\nBrowse to',
         Colors.underline(
             'https://login.live.com/oauth20_authorize.srf?client_id=0000000040197E82&scope=' +
                 scope +
-                '&response_type=token&redirect_uri=https%3A%2F%2Fwww.lunesu.com%2Fonedrive-cli%2Foauthcallbackhandler.html'
+                '&response_type=token&state=' +
+                encodeURIComponent(cmd) +
+                '&redirect_uri=https%3A%2F%2Fwww.lunesu.com%2Fonedrive-cli%2Foauthcallbackhandler.html'
         )
     )
+}
+
+function ask(question) {
+    const rl = Readline.createInterface({
+        input: process.stdin,
+        output: process.stdout,
+    })
+    return new Promise(resolve => {
+        rl.question(question, answer => {
+            rl.close()
+            resolve(answer)
+        })
+    })
+}
+
+// Accept a bare access token or a whole pasted "<cmd> login <token>" line.
+function extractToken(input) {
+    input = input.trim()
+    const m = /\blogin\s+(?:-r\s+|--readonly\s+)?(.+)$/s.exec(input)
+    return (m ? m[1] : input).trim()
 }
 
 async function login(args) {
@@ -585,14 +613,18 @@ async function login(args) {
         readonly = true
         args.shift()
     }
-    const token = args.pop()
-    if (typeof token === 'string') {
+    let token = args.pop()
+    if (typeof token !== 'string') {
+        // No token on the command line: show the sign-in URL, then read the
+        // token pasted back from the landing page.
+        loginUrl(readonly)
+        token = extractToken(await ask('\nPaste the token (or the whole command) here: '))
+    }
+    if (token) {
         await FS.writeFile(TOKEN_PATH, token)
         return 'Access token was saved to ' + TOKEN_PATH
-    } else {
-        console.error('usage: login [-r|--readonly] [access_token]')
-        loginUrl(readonly)
     }
+    console.error('usage: login [-r|--readonly] [access_token]')
 }
 
 async function ln(args) {

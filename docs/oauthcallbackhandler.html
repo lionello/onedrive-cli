@@ -13,11 +13,18 @@
     return document.execCommand('copy');
   }
 
+  function fromHash(name) {
+    var m = new RegExp('[#&]' + name + '=([^&]+)').exec(window.location.hash);
+    return m ? decodeURIComponent(m[1]) : null;
+  }
+
   function init() {
 
-    var access_token = /access_token=([^&]+)/.exec(window.location.hash)[1];
+    var access_token = fromHash('access_token');
+    // The CLI passes its own command name (e.g. 'onedrive') via OAuth `state`.
+    var cmd = fromHash('state') || 'onedrive-cli';
     textarea = document.getElementById('token')
-    textarea.value = " onedrive-cli login "+decodeURIComponent(access_token);
+    textarea.value = " " + cmd + " login " + access_token;
     textarea.focus();
 
     document.getElementById('copy').addEventListener('click', click);
