@@ -799,25 +799,27 @@ async function find(args) {
 
 /*
 GET /drive/root/view.search?q={query}
-Server-side search across the whole drive; OneDrive pages the matches for
-us. Note: the API ignores any folder anchor, so search is always global --
-pipe the output to e.g. `grep '^:/folder/'` to limit it to a subtree.
+Server-side full-text search across the whole drive, listing the paths of
+matching files (like `grep -rl`). OneDrive pages the matches for us. The API
+ignores any folder anchor, so the search is always global -- pipe to e.g.
+`grep '^:/folder/'` to limit it to a subtree, or use `find -iname` to match
+on filenames instead of contents.
 */
-async function search_paged(cont) {
+async function grep_paged(cont) {
     if (cont === undefined) {
         return
     }
     const result = await call(cont)
     result.value.map(absolute).forEach(file => console.log(file))
-    await search_paged(result['@odata.nextLink'])
+    await grep_paged(result['@odata.nextLink'])
 }
 
-async function search(args) {
+async function grep(args) {
     if (args.length !== 1) {
-        console.error('usage: search query')
+        console.error('usage: grep pattern   (full-text; use `find -iname` for filenames)')
     } else {
         const query = encodeURIComponent(args[0])
-        await search_paged('/drive/root/view.search?q=' + query)
+        await grep_paged('/drive/root/view.search?q=' + query)
     }
 }
 
@@ -836,7 +838,7 @@ async function main(argv) {
                 )
             )
             console.log(
-                '\nusage: onedrive COMMAND [arguments]\n\ncommands: cat chmod cp df find help ln login ls mkdir mv rm search sendmail stat wget'
+                '\nusage: onedrive COMMAND [arguments]\n\ncommands: cat chmod cp df find grep help ln login ls mkdir mv rm sendmail stat wget'
             )
             return
 
@@ -855,6 +857,9 @@ async function main(argv) {
         case 'find':
             return find(argv.slice(3))
 
+        case 'grep':
+            return grep(argv.slice(3))
+
         case 'ln':
             return ln(argv.slice(3))
 
@@ -872,9 +877,6 @@ async function main(argv) {
 
         case 'rm':
             return rm(argv.slice(3))
-
-        case 'search':
-            return search(argv.slice(3))
 
         case 'sendmail':
             return sendmail(argv.slice(3))
