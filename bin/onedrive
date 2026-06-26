@@ -338,13 +338,13 @@ async function download(op, from, target) {
     if (target.endsWith('/')) {
         target = target + Path.basename(from)
     }
-    from = sanitize(from)
+    const remote = sanitize(from)
     // TODO: avoid download if the SHA1 is the same
-    const data = await getContent(from + '/content')
+    const data = await getContent(remote + '/content')
     await FS.writeFile(target, data)
     if (op === MOVE) {
         console.log(from, '=>', target)
-        return rm(from)
+        return rmItem(from)
     } else {
         console.log(from, '->', target)
     }
@@ -406,9 +406,7 @@ async function cp_mv(op, args, target) {
         for (const cur of args) {
             await rename(cur, target)
         }
-    }
-
-    if (args[0].startsWith('./') || target.startsWith(':/')) {
+    } else if (args[0].startsWith('./') || target.startsWith(':/')) {
         // from local to onedrive
         for (const cur of args) {
             await upload(op, cur, target)
