@@ -1,10 +1,10 @@
 with import <nixpkgs> {};
 mkShell {
   buildInputs = [
-    nodejs-18_x
-    nodePackages.pnpm
+    nodejs_24
+    #nodePackages.pnpm
+    #nodePackages.node2nix
     ruby.gems.redcarpet # for readme generation
-    nodePackages.node2nix
   ];
   NODE_ENV = "development";
 }
