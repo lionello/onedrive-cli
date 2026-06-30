@@ -568,21 +568,36 @@ async function cat(args) {
     }
 }
 
+// How the user invoked us, so the landing page can echo a runnable command.
+// Prefer a path relative to the cwd (keeps the folder, e.g. 'bin/onedrive')
+// and fall back to the basename when we live outside the cwd (e.g. an
+// installed 'onedrive' on the PATH).
+function commandName() {
+    const argv1 = process.argv[1] || 'onedrive-cli'
+    const rel = Path.relative(process.cwd(), argv1)
+    return rel && !rel.startsWith('..') && !Path.isAbsolute(rel)
+        ? rel
+        : Path.basename(argv1)
+}
+
 function loginUrl(readonly) {
     const scope = readonly ? 'onedrive.readonly' : 'onedrive.readwrite'
-    // Round-trip our own command name (e.g. 'onedrive' vs 'onedrive-cli') via
-    // the OAuth `state` param so the landing page can show the right command.
-    // (state is carried back verbatim; appending to redirect_uri instead would
-    // risk failing the provider's redirect-URI matching.)
-    const cmd = Path.basename(process.argv[1] || 'onedrive-cli')
+    // OAuth CSRF nonce: spec requires an unguessable value.
+    const state = Crypto.randomBytes(16).toString('hex')
+    // Pass our command name to the landing page via a redirect_uri query
+    // param so it can show a runnable command.
+    const redirect =
+        'https://www.lunesu.com/onedrive-cli/oauthcallbackhandler.html?cmd=' +
+        encodeURIComponent(commandName())
     console.log(
         '\nBrowse to',
         Colors.underline(
             'https://login.live.com/oauth20_authorize.srf?client_id=0000000040197E82&scope=' +
                 scope +
                 '&response_type=token&state=' +
-                encodeURIComponent(cmd) +
-                '&redirect_uri=https%3A%2F%2Fwww.lunesu.com%2Fonedrive-cli%2Foauthcallbackhandler.html'
+                state +
+                '&redirect_uri=' +
+                encodeURIComponent(redirect)
         )
     )
 }

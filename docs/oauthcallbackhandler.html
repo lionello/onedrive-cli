@@ -13,16 +13,16 @@
     return document.execCommand('copy');
   }
 
-  function fromHash(name) {
-    var m = new RegExp('[#&]' + name + '=([^&]+)').exec(window.location.hash);
+  function param(source, name) {
+    var m = new RegExp('[?#&]' + name + '=([^&]+)').exec(source);
     return m ? decodeURIComponent(m[1]) : null;
   }
 
   function init() {
 
-    var access_token = fromHash('access_token');
-    // The CLI passes its own command name (e.g. 'onedrive') via OAuth `state`.
-    var cmd = fromHash('state') || 'onedrive-cli';
+    // The token comes back in the fragment; the command name in the query.
+    var access_token = param(window.location.hash, 'access_token');
+    var cmd = param(window.location.search, 'cmd') || 'onedrive-cli';
     textarea = document.getElementById('token')
     textarea.value = " " + cmd + " login " + access_token;
     textarea.focus();
