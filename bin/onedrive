@@ -633,7 +633,9 @@ async function login(args) {
         // No token on the command line: show the sign-in URL, then read the
         // token pasted back from the landing page.
         loginUrl(readonly)
-        token = extractToken(await ask('\nPaste the token (or the whole command) here: '))
+        token = extractToken(
+            await ask('\nPaste the token (or the whole command) here: ')
+        )
     }
     if (token) {
         await FS.writeFile(TOKEN_PATH, token)
@@ -863,7 +865,9 @@ async function grep_paged(cont) {
 
 async function grep(args) {
     if (args.length !== 1) {
-        console.error('usage: grep pattern   (full-text; use `find -iname` for filenames)')
+        console.error(
+            'usage: grep pattern   (full-text; use `find -iname` for filenames)'
+        )
     } else {
         const query = encodeURIComponent(args[0])
         await grep_paged('/drive/root/view.search?q=' + query)
