@@ -2,11 +2,12 @@
     "name": "@lionello/onedrive-cli",
     "version": "1.2.0",
     "description": "OneDrive CLI",
-    "bin": "bin/onedrive",
+    "bin": {
+        "onedrive-cli": "bin/onedrive"
+    },
     "scripts": {
         "format": "prettier -w --single-quote bin/onedrive",
         "lint": "npx eslint bin/onedrive",
-        "node2nix": "node2nix -l package-lock.json -18",
         "readme": "redcarpet README.md >docs/index.html"
     },
     "keywords": [
