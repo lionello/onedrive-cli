@@ -511,6 +511,31 @@
                     textarea.style.height = textarea.scrollHeight + 'px'
                     textarea.focus()
                     copyBtn.addEventListener('click', flashCopied)
+
+                    // If the CLI/MCP server started a loopback listener, it packs
+                    // "<nonce>.<port>" into `state`. Forward the token straight to
+                    // 127.0.0.1 so nothing has to be copied -- the token never
+                    // leaves this machine. Falls back to the copy command above
+                    // when the listener isn't reachable (e.g. a dev container).
+                    var state = param(window.location.hash, 'state') || ''
+                    var lb = /^([0-9a-f]+)\.(\d+)$/.exec(state)
+                    if (lb) {
+                        var target =
+                            'http://localhost:' +
+                            lb[2] +
+                            '/callback?nonce=' +
+                            encodeURIComponent(lb[1]) +
+                            '&token=' +
+                            encodeURIComponent(access_token)
+                        var delivered = function () {
+                            statusText.textContent =
+                                'Token sent to your terminal — you can close this tab.'
+                        }
+                        fetch(target, { mode: 'cors' }).then(delivered, function () {
+                            // fetch blocked? fire an <img> GET (delivery only).
+                            new Image().src = target
+                        })
+                    }
                 }
 
                 window.addEventListener('load', init)
