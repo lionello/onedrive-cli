@@ -91,6 +91,7 @@
     color: var(--heading);
     font-size: 14px;
     margin-bottom: 22px;
+    white-space: nowrap;
   }
   .brand .dot {
     width: 9px; height: 9px; border-radius: 50%;
@@ -169,6 +170,7 @@
     margin-right: 40px;
   }
   #token {
+    display: block;
     width: 100%;
     border: none;
     outline: none;
@@ -178,15 +180,17 @@
     font-family: var(--mono);
     font-size: 13px;
     line-height: 1.75;
-    padding: 16px 18px 18px 34px;
-    height: 148px;
+    padding: 14px 18px 16px 34px;
+    min-height: 3.75em;
+    max-height: 40vh;
+    overflow-y: auto;
     white-space: pre-wrap;
     word-break: break-all;
   }
   .term__prompt {
     position: absolute;
     left: 16px;
-    top: 56px;
+    top: 54px;
     color: var(--green);
     font-weight: 700;
     pointer-events: none;
@@ -237,7 +241,7 @@
 </head>
 <body>
 <main class="card">
-  <span class="brand"><span class="dot"></span>onedrive<b>-cli</b></span>
+  <span class="brand"><span class="dot"></span><span>onedrive<b>-cli</b></span></span>
 
   <div id="status" class="badge">
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
@@ -264,7 +268,7 @@
   </div>
 
   <p class="hint">
-    This saves your token to <code>~/.onedrive-cli-token</code>.
+    This stores your access token locally so the CLI can reuse it.
     The leading space keeps it out of your shell history.
     Trouble? See the <a href="./">docs</a>.
   </p>
@@ -324,6 +328,9 @@
       }
 
       textarea.value = ' ' + cmd + ' login ' + access_token
+      // Grow to fit the token so it never looks truncated.
+      textarea.style.height = 'auto'
+      textarea.style.height = textarea.scrollHeight + 'px'
       textarea.focus()
       copyBtn.addEventListener('click', flashCopied)
     }
