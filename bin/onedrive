@@ -177,7 +177,7 @@ async function df() {
             prettyPrint(drive.quota.remaining),
             padLeft(capacity, 9),
             prettyPrint(drive.quota.deleted),
-            drive.status.state
+            (drive.status && drive.status.state) || ''
         )
     }
 }
