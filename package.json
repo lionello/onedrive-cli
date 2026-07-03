@@ -6,7 +6,7 @@
         "onedrive-cli": "bin/onedrive"
     },
     "scripts": {
-        "format": "prettier -w --single-quote bin/onedrive",
+        "format": "prettier -w bin/onedrive docs/oauthcallbackhandler.html",
         "lint": "npx eslint bin/onedrive",
         "readme": "cat docs/_header.html > docs/index.html && redcarpet --parse fenced-code-blocks --parse tables --parse autolink --parse strikethrough README.md >> docs/index.html && cat docs/_footer.html >> docs/index.html"
     },
@@ -38,6 +38,7 @@
     },
     "prettier": {
         "semi": false,
+        "singleQuote": true,
         "arrowParens": "avoid"
     }
 }

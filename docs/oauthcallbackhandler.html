@@ -1,342 +1,520 @@
-<!doctype html>
+<!DOCTYPE html>
 <html lang="en">
-<head>
-<meta charset="utf-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>onedrive-cli — OAuth callback</title>
-<meta name="color-scheme" content="dark" />
-<meta name="robots" content="noindex" />
-<link rel="preconnect" href="https://fonts.googleapis.com" />
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-<link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=JetBrains+Mono:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
-<style>
-  :root {
-    --bg: #0a0c11;
-    --bg-2: #0d1017;
-    --surface: #12161f;
-    --surface-2: #161b26;
-    --border: rgba(255, 255, 255, 0.09);
-    --border-strong: rgba(255, 255, 255, 0.16);
-    --text: #d7dce6;
-    --heading: #f2f5fa;
-    --muted: #8b93a3;
-    --faint: #626a79;
-    --cyan: #45d6e0;
-    --blue: #4d9dff;
-    --green: #56e08a;
-    --red: #ff6b6b;
-    --mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
-    --display: "Bricolage Grotesque", "Segoe UI", system-ui, sans-serif;
-  }
+    <head>
+        <meta charset="utf-8" />
+        <meta name="viewport" content="width=device-width, initial-scale=1" />
+        <title>onedrive-cli — OAuth callback</title>
+        <meta name="color-scheme" content="dark" />
+        <meta name="robots" content="noindex" />
+        <link rel="preconnect" href="https://fonts.googleapis.com" />
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+        <link
+            href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,400..800&family=JetBrains+Mono:wght@400;500;600;700;800&display=swap"
+            rel="stylesheet"
+        />
+        <style>
+            :root {
+                --bg: #0a0c11;
+                --bg-2: #0d1017;
+                --surface: #12161f;
+                --surface-2: #161b26;
+                --border: rgba(255, 255, 255, 0.09);
+                --border-strong: rgba(255, 255, 255, 0.16);
+                --text: #d7dce6;
+                --heading: #f2f5fa;
+                --muted: #8b93a3;
+                --faint: #626a79;
+                --cyan: #45d6e0;
+                --blue: #4d9dff;
+                --green: #56e08a;
+                --red: #ff6b6b;
+                --mono: 'JetBrains Mono', ui-monospace, 'SF Mono', Menlo,
+                    monospace;
+                --display: 'Bricolage Grotesque', 'Segoe UI', system-ui,
+                    sans-serif;
+            }
 
-  * { box-sizing: border-box; }
+            * {
+                box-sizing: border-box;
+            }
 
-  body {
-    margin: 0;
-    min-height: 100vh;
-    display: grid;
-    place-items: center;
-    padding: 28px;
-    font-family: var(--mono);
-    color: var(--text);
-    background: var(--bg);
-    -webkit-font-smoothing: antialiased;
-  }
-  body::before {
-    content: "";
-    position: fixed;
-    inset: 0;
-    z-index: -2;
-    background:
-      radial-gradient(55% 50% at 80% 0%, rgba(77, 157, 255, 0.2), transparent 60%),
-      radial-gradient(45% 45% at 12% 5%, rgba(69, 214, 224, 0.18), transparent 55%),
-      radial-gradient(60% 55% at 50% 108%, rgba(88, 224, 138, 0.09), transparent 60%),
-      linear-gradient(180deg, var(--bg), var(--bg-2));
-  }
-  body::after {
-    content: "";
-    position: fixed;
-    inset: 0;
-    z-index: -1;
-    pointer-events: none;
-    background-image:
-      linear-gradient(rgba(255, 255, 255, 0.02) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(255, 255, 255, 0.02) 1px, transparent 1px);
-    background-size: 46px 46px;
-    mask-image: radial-gradient(110% 80% at 50% 40%, #000 20%, transparent 80%);
-    -webkit-mask-image: radial-gradient(110% 80% at 50% 40%, #000 20%, transparent 80%);
-  }
-  ::selection { background: rgba(69, 214, 224, 0.28); color: #fff; }
+            body {
+                margin: 0;
+                min-height: 100vh;
+                display: grid;
+                place-items: center;
+                padding: 28px;
+                font-family: var(--mono);
+                color: var(--text);
+                background: var(--bg);
+                -webkit-font-smoothing: antialiased;
+            }
 
-  .card {
-    width: 100%;
-    max-width: 620px;
-    background: linear-gradient(180deg, rgba(22, 27, 38, 0.85), rgba(18, 22, 31, 0.85));
-    border: 1px solid var(--border);
-    border-radius: 20px;
-    padding: 34px clamp(22px, 5vw, 40px) 32px;
-    box-shadow: 0 40px 100px -40px rgba(0, 0, 0, 0.9), inset 0 1px 0 rgba(255, 255, 255, 0.04);
-    backdrop-filter: blur(10px);
-    -webkit-backdrop-filter: blur(10px);
-    animation: rise 0.7s cubic-bezier(0.16, 1, 0.3, 1) both;
-  }
-  @keyframes rise { from { opacity: 0; transform: translateY(20px); } to { opacity: 1; transform: none; } }
+            body::before {
+                content: '';
+                position: fixed;
+                inset: 0;
+                z-index: -2;
+                background: radial-gradient(
+                        55% 50% at 80% 0%,
+                        rgba(77, 157, 255, 0.2),
+                        transparent 60%
+                    ),
+                    radial-gradient(
+                        45% 45% at 12% 5%,
+                        rgba(69, 214, 224, 0.18),
+                        transparent 55%
+                    ),
+                    radial-gradient(
+                        60% 55% at 50% 108%,
+                        rgba(88, 224, 138, 0.09),
+                        transparent 60%
+                    ),
+                    linear-gradient(180deg, var(--bg), var(--bg-2));
+            }
 
-  .brand {
-    display: inline-flex;
-    align-items: center;
-    gap: 10px;
-    font-weight: 800;
-    letter-spacing: -0.02em;
-    color: var(--heading);
-    font-size: 14px;
-    margin-bottom: 22px;
-    white-space: nowrap;
-  }
-  .brand .dot {
-    width: 9px; height: 9px; border-radius: 50%;
-    background: var(--green);
-    box-shadow: 0 0 12px var(--green);
-    animation: blink 2.6s ease-in-out infinite;
-  }
-  @keyframes blink { 0%,100% { opacity: 1; } 50% { opacity: 0.35; } }
-  .brand b { color: var(--cyan); }
+            body::after {
+                content: '';
+                position: fixed;
+                inset: 0;
+                z-index: -1;
+                pointer-events: none;
+                background-image: linear-gradient(
+                        rgba(255, 255, 255, 0.02) 1px,
+                        transparent 1px
+                    ),
+                    linear-gradient(
+                        90deg,
+                        rgba(255, 255, 255, 0.02) 1px,
+                        transparent 1px
+                    );
+                background-size: 46px 46px;
+                mask-image: radial-gradient(
+                    110% 80% at 50% 40%,
+                    #000 20%,
+                    transparent 80%
+                );
+                -webkit-mask-image: radial-gradient(
+                    110% 80% at 50% 40%,
+                    #000 20%,
+                    transparent 80%
+                );
+            }
 
-  .badge {
-    display: inline-flex;
-    align-items: center;
-    gap: 8px;
-    font-size: 12px;
-    font-weight: 600;
-    letter-spacing: 0.02em;
-    color: var(--green);
-    background: rgba(88, 224, 138, 0.1);
-    border: 1px solid rgba(88, 224, 138, 0.25);
-    border-radius: 999px;
-    padding: 5px 13px;
-    margin-bottom: 18px;
-  }
-  .badge svg { width: 14px; height: 14px; }
-  .badge.err { color: var(--red); background: rgba(255, 107, 107, 0.1); border-color: rgba(255, 107, 107, 0.28); }
+            ::selection {
+                background: rgba(69, 214, 224, 0.28);
+                color: #fff;
+            }
 
-  h1 {
-    font-family: var(--display);
-    font-size: clamp(1.7rem, 6vw, 2.3rem);
-    line-height: 1.05;
-    font-weight: 800;
-    letter-spacing: -0.035em;
-    color: var(--heading);
-    margin: 0 0 10px;
-  }
-  .lead {
-    color: var(--muted);
-    font-size: 14.5px;
-    line-height: 1.6;
-    margin: 0 0 24px;
-  }
-  .lead b { color: var(--text); font-weight: 600; }
+            .card {
+                width: 100%;
+                max-width: 620px;
+                background: linear-gradient(
+                    180deg,
+                    rgba(22, 27, 38, 0.85),
+                    rgba(18, 22, 31, 0.85)
+                );
+                border: 1px solid var(--border);
+                border-radius: 20px;
+                padding: 34px clamp(22px, 5vw, 40px) 32px;
+                box-shadow: 0 40px 100px -40px rgba(0, 0, 0, 0.9),
+                    inset 0 1px 0 rgba(255, 255, 255, 0.04);
+                backdrop-filter: blur(10px);
+                -webkit-backdrop-filter: blur(10px);
+                animation: rise 0.7s cubic-bezier(0.16, 1, 0.3, 1) both;
+            }
 
-  .term {
-    position: relative;
-    background: var(--surface);
-    border: 1px solid var(--border);
-    border-radius: 14px;
-    padding: 42px 0 0;
-    overflow: hidden;
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
-  }
-  .term__bar {
-    position: absolute;
-    top: 0; left: 0; right: 0;
-    height: 40px;
-    display: flex;
-    align-items: center;
-    padding: 0 16px;
-    border-bottom: 1px solid var(--border);
-    background: rgba(255, 255, 255, 0.02);
-  }
-  .term__dots { display: flex; gap: 7px; }
-  .term__dots i { width: 11px; height: 11px; border-radius: 50%; display: block; }
-  .term__dots i:nth-child(1) { background: #ff5f57; }
-  .term__dots i:nth-child(2) { background: #febc2e; }
-  .term__dots i:nth-child(3) { background: #28c840; }
-  .term__title {
-    flex: 1;
-    text-align: center;
-    font-size: 11px;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
-    color: var(--faint);
-    margin-right: 40px;
-  }
-  #token {
-    display: block;
-    width: 100%;
-    border: none;
-    outline: none;
-    resize: none;
-    background: transparent;
-    color: #cfe3ec;
-    font-family: var(--mono);
-    font-size: 13px;
-    line-height: 1.75;
-    padding: 14px 18px 16px 34px;
-    min-height: 3.75em;
-    max-height: 40vh;
-    overflow-y: auto;
-    white-space: pre-wrap;
-    word-break: break-all;
-  }
-  .term__prompt {
-    position: absolute;
-    left: 16px;
-    top: 54px;
-    color: var(--green);
-    font-weight: 700;
-    pointer-events: none;
-  }
+            @keyframes rise {
+                from {
+                    opacity: 0;
+                    transform: translateY(20px);
+                }
 
-  .actions { display: flex; gap: 12px; margin-top: 18px; flex-wrap: wrap; }
-  #copy {
-    flex: 1;
-    min-width: 160px;
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    gap: 9px;
-    font-family: var(--mono);
-    font-weight: 700;
-    font-size: 14px;
-    color: var(--bg);
-    background: linear-gradient(135deg, var(--cyan), var(--blue));
-    border: none;
-    border-radius: 11px;
-    padding: 14px 20px;
-    cursor: pointer;
-    transition: transform 0.16s ease, box-shadow 0.16s ease, filter 0.16s ease;
-    box-shadow: 0 10px 30px rgba(77, 157, 255, 0.28);
-  }
-  #copy:hover { transform: translateY(-2px); box-shadow: 0 14px 38px rgba(77, 157, 255, 0.42); }
-  #copy:active { transform: translateY(0); }
-  #copy.copied { background: linear-gradient(135deg, var(--green), #3fbf74); box-shadow: 0 10px 30px rgba(88, 224, 138, 0.35); }
-  #copy svg { width: 16px; height: 16px; }
+                to {
+                    opacity: 1;
+                    transform: none;
+                }
+            }
 
-  .hint {
-    margin-top: 18px;
-    font-size: 12.5px;
-    color: var(--faint);
-    line-height: 1.6;
-  }
-  .hint code {
-    font-family: var(--mono);
-    color: var(--cyan);
-    background: rgba(69, 214, 224, 0.1);
-    border: 1px solid rgba(69, 214, 224, 0.16);
-    border-radius: 5px;
-    padding: 1px 6px;
-  }
-  a { color: var(--cyan); text-decoration: none; }
-  a:hover { color: #fff; }
-</style>
-</head>
-<body>
-<main class="card">
-  <span class="brand"><span class="dot"></span><span>onedrive<b>-cli</b></span></span>
+            .brand {
+                display: inline-flex;
+                align-items: center;
+                gap: 10px;
+                font-weight: 800;
+                letter-spacing: -0.02em;
+                color: var(--heading);
+                font-size: 14px;
+                margin-bottom: 22px;
+                white-space: nowrap;
+            }
 
-  <div id="status" class="badge">
-    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>
-    <span id="status-text">Signed in to Microsoft</span>
-  </div>
+            .brand .dot {
+                width: 9px;
+                height: 9px;
+                border-radius: 50%;
+                background: var(--green);
+                box-shadow: 0 0 12px var(--green);
+                animation: blink 2.6s ease-in-out infinite;
+            }
 
-  <h1>Almost there.</h1>
-  <p class="lead">Copy the command below and paste it into your terminal to finish <b>login</b>. The token lives for about an hour.</p>
+            @keyframes blink {
+                0%,
+                100% {
+                    opacity: 1;
+                }
 
-  <div class="term">
-    <div class="term__bar">
-      <span class="term__dots"><i></i><i></i><i></i></span>
-      <span class="term__title">login</span>
-    </div>
-    <span class="term__prompt">$</span>
-    <textarea id="token" readonly="readonly" spellcheck="false" aria-label="Login command"></textarea>
-  </div>
+                50% {
+                    opacity: 0.35;
+                }
+            }
 
-  <div class="actions">
-    <button id="copy" type="button">
-      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
-      Copy command
-    </button>
-  </div>
+            .brand b {
+                color: var(--cyan);
+            }
 
-  <p class="hint">
-    This stores your access token locally so the CLI can reuse it.
-    The leading space keeps it out of your shell history.
-    Trouble? See the <a href="./">docs</a>.
-  </p>
-</main>
+            .badge {
+                display: inline-flex;
+                align-items: center;
+                gap: 8px;
+                font-size: 12px;
+                font-weight: 600;
+                letter-spacing: 0.02em;
+                color: var(--green);
+                background: rgba(88, 224, 138, 0.1);
+                border: 1px solid rgba(88, 224, 138, 0.25);
+                border-radius: 999px;
+                padding: 5px 13px;
+                margin-bottom: 18px;
+            }
 
-<script>
-  ;(function () {
-    var textarea, copyBtn, status, statusText
+            .badge svg {
+                width: 14px;
+                height: 14px;
+            }
 
-    function param(source, name) {
-      var m = new RegExp('[?#&]' + name + '=([^&]+)').exec(source)
-      return m ? decodeURIComponent(m[1]) : null
-    }
+            .badge.err {
+                color: var(--red);
+                background: rgba(255, 107, 107, 0.1);
+                border-color: rgba(255, 107, 107, 0.28);
+            }
 
-    function flashCopied() {
-      textarea.setSelectionRange(0, textarea.value.length)
-      textarea.focus()
-      var ok = false
-      try {
-        ok = document.execCommand('copy')
-      } catch (e) {}
-      if (navigator.clipboard) {
-        navigator.clipboard.writeText(textarea.value).catch(function () {})
-      }
-      copyBtn.classList.add('copied')
-      copyBtn.lastChild.textContent = ' Copied!'
-      setTimeout(function () {
-        copyBtn.classList.remove('copied')
-        copyBtn.lastChild.textContent = ' Copy command'
-      }, 1800)
-      return ok
-    }
+            h1 {
+                font-family: var(--display);
+                font-size: clamp(1.7rem, 6vw, 2.3rem);
+                line-height: 1.05;
+                font-weight: 800;
+                letter-spacing: -0.035em;
+                color: var(--heading);
+                margin: 0 0 10px;
+            }
 
-    function init() {
-      textarea = document.getElementById('token')
-      copyBtn = document.getElementById('copy')
-      status = document.getElementById('status')
-      statusText = document.getElementById('status-text')
+            .lead {
+                color: var(--muted);
+                font-size: 14.5px;
+                line-height: 1.6;
+                margin: 0 0 24px;
+            }
 
-      // The token comes back in the fragment; the command name in the query.
-      var access_token = param(window.location.hash, 'access_token')
-      var cmd = param(window.location.search, 'cmd') || 'onedrive-cli'
+            .lead b {
+                color: var(--text);
+                font-weight: 600;
+            }
 
-      if (!access_token) {
-        status.classList.add('err')
-        status.querySelector('svg').innerHTML =
-          '<circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/>'
-        statusText.textContent = 'No access token found in the URL'
-        textarea.value =
-          '# No token was returned.\n# Run `' +
-          cmd +
-          ' login` again and complete the Microsoft sign-in.'
-        copyBtn.disabled = true
-        copyBtn.style.opacity = 0.5
-        copyBtn.style.cursor = 'not-allowed'
-        return
-      }
+            .term {
+                position: relative;
+                background: var(--surface);
+                border: 1px solid var(--border);
+                border-radius: 14px;
+                padding: 42px 0 0;
+                overflow: hidden;
+                box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+            }
 
-      textarea.value = ' ' + cmd + ' login ' + access_token
-      // Grow to fit the token so it never looks truncated.
-      textarea.style.height = 'auto'
-      textarea.style.height = textarea.scrollHeight + 'px'
-      textarea.focus()
-      copyBtn.addEventListener('click', flashCopied)
-    }
+            .term__bar {
+                position: absolute;
+                top: 0;
+                left: 0;
+                right: 0;
+                height: 40px;
+                display: flex;
+                align-items: center;
+                padding: 0 16px;
+                border-bottom: 1px solid var(--border);
+                background: rgba(255, 255, 255, 0.02);
+            }
 
-    window.addEventListener('load', init)
-  })()
-</script>
-</body>
+            .term__dots {
+                display: flex;
+                gap: 7px;
+            }
+
+            .term__dots i {
+                width: 11px;
+                height: 11px;
+                border-radius: 50%;
+                display: block;
+            }
+
+            .term__dots i:nth-child(1) {
+                background: #ff5f57;
+            }
+
+            .term__dots i:nth-child(2) {
+                background: #febc2e;
+            }
+
+            .term__dots i:nth-child(3) {
+                background: #28c840;
+            }
+
+            .term__title {
+                flex: 1;
+                text-align: center;
+                font-size: 11px;
+                letter-spacing: 0.14em;
+                text-transform: uppercase;
+                color: var(--faint);
+                margin-right: 40px;
+            }
+
+            #token {
+                display: block;
+                width: 100%;
+                border: none;
+                outline: none;
+                resize: none;
+                background: transparent;
+                color: #cfe3ec;
+                font-family: var(--mono);
+                font-size: 13px;
+                line-height: 1.75;
+                padding: 14px 18px 16px 34px;
+                min-height: 3.75em;
+                max-height: 40vh;
+                overflow-y: auto;
+                white-space: pre-wrap;
+                word-break: break-all;
+            }
+
+            .term__prompt {
+                position: absolute;
+                left: 16px;
+                top: 54px;
+                color: var(--green);
+                font-weight: 700;
+                pointer-events: none;
+            }
+
+            .actions {
+                display: flex;
+                gap: 12px;
+                margin-top: 18px;
+                flex-wrap: wrap;
+            }
+
+            #copy {
+                flex: 1;
+                min-width: 160px;
+                display: inline-flex;
+                align-items: center;
+                justify-content: center;
+                gap: 9px;
+                font-family: var(--mono);
+                font-weight: 700;
+                font-size: 14px;
+                color: var(--bg);
+                background: linear-gradient(135deg, var(--cyan), var(--blue));
+                border: none;
+                border-radius: 11px;
+                padding: 14px 20px;
+                cursor: pointer;
+                transition: transform 0.16s ease, box-shadow 0.16s ease,
+                    filter 0.16s ease;
+                box-shadow: 0 10px 30px rgba(77, 157, 255, 0.28);
+            }
+
+            #copy:hover {
+                transform: translateY(-2px);
+                box-shadow: 0 14px 38px rgba(77, 157, 255, 0.42);
+            }
+
+            #copy:active {
+                transform: translateY(0);
+            }
+
+            #copy.copied {
+                background: linear-gradient(135deg, var(--green), #3fbf74);
+                box-shadow: 0 10px 30px rgba(88, 224, 138, 0.35);
+            }
+
+            #copy svg {
+                width: 16px;
+                height: 16px;
+            }
+
+            .hint {
+                margin-top: 18px;
+                font-size: 12.5px;
+                color: var(--faint);
+                line-height: 1.6;
+            }
+
+            .hint code {
+                font-family: var(--mono);
+                color: var(--cyan);
+                background: rgba(69, 214, 224, 0.1);
+                border: 1px solid rgba(69, 214, 224, 0.16);
+                border-radius: 5px;
+                padding: 1px 6px;
+            }
+
+            a {
+                color: var(--cyan);
+                text-decoration: none;
+            }
+
+            a:hover {
+                color: #fff;
+            }
+        </style>
+    </head>
+
+    <body>
+        <main class="card">
+            <span class="brand"
+                ><span class="dot"></span><span>onedrive-cli</span></span
+            >
+
+            <div id="status" class="badge">
+                <svg
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2.5"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                >
+                    <path d="M20 6 9 17l-5-5" />
+                </svg>
+                <span id="status-text">Signed in to Microsoft</span>
+            </div>
+
+            <h1>Almost there.</h1>
+            <p class="lead">
+                Copy the command below and paste it into your terminal to finish
+                <b>login</b>. The token lives for about an hour.
+            </p>
+
+            <div class="term">
+                <div class="term__bar">
+                    <span class="term__dots"><i></i><i></i><i></i></span>
+                    <span class="term__title">login</span>
+                </div>
+                <span class="term__prompt">$</span>
+                <textarea
+                    id="token"
+                    readonly="readonly"
+                    spellcheck="false"
+                    aria-label="Login command"
+                ></textarea>
+            </div>
+
+            <div class="actions">
+                <button id="copy" type="button">
+                    <svg
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                        stroke-linecap="round"
+                        stroke-linejoin="round"
+                    >
+                        <rect x="9" y="9" width="13" height="13" rx="2" />
+                        <path
+                            d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"
+                        />
+                    </svg>
+                    Copy command
+                </button>
+            </div>
+
+            <p class="hint">
+                This stores your access token locally so the CLI can reuse it.
+                The leading space keeps it out of your shell history. Trouble?
+                See the <a href="./">docs</a>.
+            </p>
+        </main>
+
+        <script>
+            ;(function () {
+                var textarea, copyBtn, status, statusText
+
+                function param(source, name) {
+                    var m = new RegExp('[?#&]' + name + '=([^&]+)').exec(source)
+                    return m ? decodeURIComponent(m[1]) : null
+                }
+
+                function flashCopied() {
+                    textarea.setSelectionRange(0, textarea.value.length)
+                    textarea.focus()
+                    var ok = false
+                    try {
+                        ok = document.execCommand('copy')
+                    } catch (e) {}
+                    if (navigator.clipboard) {
+                        navigator.clipboard
+                            .writeText(textarea.value)
+                            .catch(function () {})
+                    }
+                    copyBtn.classList.add('copied')
+                    copyBtn.lastChild.textContent = ' Copied!'
+                    setTimeout(function () {
+                        copyBtn.classList.remove('copied')
+                        copyBtn.lastChild.textContent = ' Copy command'
+                    }, 1800)
+                    return ok
+                }
+
+                function init() {
+                    textarea = document.getElementById('token')
+                    copyBtn = document.getElementById('copy')
+                    status = document.getElementById('status')
+                    statusText = document.getElementById('status-text')
+
+                    // The token comes back in the fragment; the command name in the query.
+                    var access_token = param(
+                        window.location.hash,
+                        'access_token'
+                    )
+                    var cmd =
+                        param(window.location.search, 'cmd') || 'onedrive-cli'
+
+                    if (!access_token) {
+                        status.classList.add('err')
+                        status.querySelector('svg').innerHTML =
+                            '<circle cx="12" cy="12" r="10"/><path d="M12 8v4M12 16h.01"/>'
+                        statusText.textContent =
+                            'No access token found in the URL'
+                        textarea.value =
+                            '# No token was returned.\n# Run `' +
+                            cmd +
+                            ' login` again and complete the Microsoft sign-in.'
+                        copyBtn.disabled = true
+                        copyBtn.style.opacity = 0.5
+                        copyBtn.style.cursor = 'not-allowed'
+                        return
+                    }
+
+                    textarea.value = ' ' + cmd + ' login ' + access_token
+                    // Grow to fit the token so it never looks truncated.
+                    textarea.style.height = 'auto'
+                    textarea.style.height = textarea.scrollHeight + 'px'
+                    textarea.focus()
+                    copyBtn.addEventListener('click', flashCopied)
+                }
+
+                window.addEventListener('load', init)
+            })()
+        </script>
+    </body>
 </html>
