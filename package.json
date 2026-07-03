@@ -8,7 +8,7 @@
     "scripts": {
         "format": "prettier -w --single-quote bin/onedrive",
         "lint": "npx eslint bin/onedrive",
-        "readme": "redcarpet README.md >docs/index.html"
+        "readme": "cat docs/_header.html > docs/index.html && redcarpet --parse fenced-code-blocks --parse tables --parse autolink --parse strikethrough README.md >> docs/index.html && cat docs/_footer.html >> docs/index.html"
     },
     "keywords": [
         "onedrive",

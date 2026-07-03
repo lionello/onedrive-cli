@@ -1,0 +1,72 @@
+</main>
+<footer class="site-footer">
+  <span class="prompt">$</span>
+  <span>onedrive-cli — MIT licensed</span>
+  <span class="nav__spacer" style="flex:1"></span>
+  <a href="https://github.com/lionello/onedrive-cli">GitHub</a>
+  <a href="https://www.npmjs.com/package/@lionello/onedrive-cli">npm</a>
+  <a href="https://modelcontextprotocol.io">MCP</a>
+</footer>
+<script>
+  (function () {
+    var doc = document.querySelector(".doc");
+
+    // Anchor ids on section headings so the nav links resolve.
+    doc.querySelectorAll("h2, h3").forEach(function (h) {
+      if (!h.id) h.id = h.textContent.trim().replace(/[^\w]+/g, "-").replace(/^-|-$/g, "");
+    });
+
+    // Hero action buttons, injected after the tagline paragraph.
+    var h1 = doc.querySelector("h1");
+    var tagline = h1 && h1.nextElementSibling;
+    if (tagline && tagline.tagName === "P") {
+      var row = document.createElement("div");
+      row.className = "hero-actions";
+      row.innerHTML =
+        '<a class="btn btn--primary" href="#Installation">$ npm install</a>' +
+        '<a class="btn btn--ghost" href="https://github.com/lionello/onedrive-cli">View source ↗</a>';
+      tagline.after(row);
+    }
+
+    // Copy buttons on every code block.
+    doc.querySelectorAll("pre").forEach(function (pre) {
+      var btn = document.createElement("button");
+      btn.className = "copy-btn";
+      btn.type = "button";
+      btn.textContent = "copy";
+      btn.addEventListener("click", function () {
+        var text = (pre.querySelector("code") || pre).innerText.replace(/^\s*\$\s?/gm, "");
+        navigator.clipboard.writeText(text).then(function () {
+          btn.textContent = "copied";
+          btn.classList.add("copied");
+          setTimeout(function () {
+            btn.textContent = "copy";
+            btn.classList.remove("copied");
+          }, 1600);
+        });
+      });
+      pre.appendChild(btn);
+    });
+
+    // Gentle reveal-on-scroll for sections.
+    if ("IntersectionObserver" in window) {
+      var io = new IntersectionObserver(function (entries) {
+        entries.forEach(function (e) {
+          if (e.isIntersecting) {
+            e.target.style.transition = "opacity .6s ease, transform .6s ease";
+            e.target.style.opacity = 1;
+            e.target.style.transform = "none";
+            io.unobserve(e.target);
+          }
+        });
+      }, { threshold: 0.08, rootMargin: "0px 0px -8% 0px" });
+      doc.querySelectorAll("h2").forEach(function (el) {
+        el.style.opacity = 0;
+        el.style.transform = "translateY(16px)";
+        io.observe(el);
+      });
+    }
+  })();
+</script>
+</body>
+</html>
