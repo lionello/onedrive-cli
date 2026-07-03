@@ -3,6 +3,7 @@ const Colors = require('colors/safe')
 const Crypto = require('crypto')
 const fetch = require('node-fetch')
 const FS = require('fs/promises')
+const Http = require('http')
 const Https = require('https')
 const Mime = require('mime')
 const Moment = require('moment')
@@ -35,10 +36,26 @@ async function checkResponse(response) {
         const contentType = response.headers.get('content-type') || ''
         if (!contentType.startsWith('application/json')) {
             const msg = await response.text()
-            throw Error(msg)
+            throw Object.assign(Error(msg), { statusCode: response.status })
         }
         const json = await response.json()
-        throw json.error
+        const error = json.error || {}
+        // Throw a real Error (not the bare API object) so the message is
+        // readable everywhere -- otherwise callers that stringify it, like the
+        // MCP layer, surface a useless "[object Object]". Spread the API error
+        // before the computed fields so an empty/missing error.message can't
+        // clobber the fallback. Carry statusCode so callers can detect auth
+        // failures (401) and permission errors (403).
+        throw Object.assign(
+            new Error(
+                error.message ||
+                    error.code ||
+                    response.statusText ||
+                    'Request failed'
+            ),
+            error,
+            { statusCode: response.status }
+        )
     }
     return response
 }
@@ -83,14 +100,18 @@ function prettyPrint(num) {
     return padLeft(humanize(num), 6)
 }
 
-var lazyToken = async function () {
-    const buffer = await FS.readFile(TOKEN_PATH)
-    const token = Promise.resolve(buffer.toString())
-    // Next time we're invoked, simply return the resolved promise
-    lazyToken = function () {
-        return token
-    }
-    return token
+// Read the token fresh from disk on every request -- a ~1KB read next to each
+// HTTPS round-trip is negligible, and it means a re-login (even from another
+// process, e.g. the CLI) is picked up immediately by the long-running MCP
+// server instead of being masked by a stale in-memory copy. Trim so a trailing
+// newline in the file can't corrupt the Authorization header.
+async function lazyToken() {
+    return (await FS.readFile(TOKEN_PATH)).toString().trim()
+}
+
+async function saveToken(token) {
+    await FS.writeFile(TOKEN_PATH, token.trim())
+    return TOKEN_PATH
 }
 
 async function call(url, method, body, headers = {}) {
@@ -580,26 +601,86 @@ function commandName() {
         : Path.basename(argv1)
 }
 
-function loginUrl(readonly) {
+function buildLoginUrl(readonly, state) {
     const scope = readonly ? 'onedrive.readonly' : 'onedrive.readwrite'
-    // OAuth CSRF nonce: spec requires an unguessable value.
-    const state = Crypto.randomBytes(16).toString('hex')
+    // state doubles as the CSRF nonce. The loopback flow packs "<nonce>.<port>"
+    // in here so the callback page knows which local port to forward the token
+    // to; a plain login just uses an unguessable nonce.
+    state = state || Crypto.randomBytes(16).toString('hex')
     // Pass our command name to the landing page via a redirect_uri query
     // param so it can show a runnable command.
     const redirect =
         'https://www.lunesu.com/onedrive-cli/oauthcallbackhandler.html?cmd=' +
         encodeURIComponent(commandName())
-    console.log(
-        '\nBrowse to',
-        Colors.underline(
-            'https://login.live.com/oauth20_authorize.srf?client_id=0000000040197E82&scope=' +
-                scope +
-                '&response_type=token&state=' +
-                state +
-                '&redirect_uri=' +
-                encodeURIComponent(redirect)
-        )
+    return (
+        'https://login.live.com/oauth20_authorize.srf?client_id=0000000040197E82&scope=' +
+        scope +
+        '&response_type=token&state=' +
+        encodeURIComponent(state) +
+        '&redirect_uri=' +
+        encodeURIComponent(redirect)
     )
+}
+
+function loginUrl(readonly) {
+    console.log('\nBrowse to', Colors.underline(buildLoginUrl(readonly)))
+}
+
+// Start a throwaway loopback listener that the callback page forwards the token
+// to (see docs/oauthcallbackhandler.html). Resolves { url, wait, cancel }: open
+// `url` to sign in, `wait` resolves with the captured token, `cancel` shuts the
+// listener down. The token goes browser -> 127.0.0.1 directly, so it never
+// passes through stdio or the model.
+function loopbackLogin(readonly) {
+    const nonce = Crypto.randomBytes(16).toString('hex')
+    const server = Http.createServer()
+    let settle
+    const wait = new Promise(resolve => (settle = resolve))
+    server.on('request', (req, res) => {
+        const u = new URL(req.url, 'http://127.0.0.1')
+        res.setHeader('Access-Control-Allow-Origin', '*')
+        if (u.pathname !== '/callback') {
+            return res.writeHead(404).end()
+        }
+        const token = u.searchParams.get('token')
+        if (!token || u.searchParams.get('nonce') !== nonce) {
+            return res.writeHead(400).end('bad request')
+        }
+        res.writeHead(200, { 'Content-Type': 'text/plain' })
+        res.end('onedrive-cli received the token. You can close this tab.')
+        settle(extractToken(token))
+    })
+    return new Promise((resolve, reject) => {
+        server.on('error', reject)
+        server.listen(process.env.PORT | 0, '127.0.0.1', () => {
+            resolve({
+                url: buildLoginUrl(
+                    readonly,
+                    nonce + '.' + server.address().port
+                ),
+                wait,
+                cancel: () => server.close(),
+            })
+        })
+    })
+}
+
+// Best-effort: open the sign-in URL in the user's browser (CLI only).
+function openBrowser(url) {
+    const opener =
+        process.platform === 'darwin'
+            ? 'open'
+            : process.platform === 'win32'
+            ? 'explorer'
+            : 'xdg-open'
+    try {
+        require('child_process')
+            .spawn(opener, [url], { stdio: 'ignore', detached: true })
+            .on('error', () => {})
+            .unref()
+    } catch (e) {
+        /* best effort */
+    }
 }
 
 function ask(question) {
@@ -623,23 +704,73 @@ function extractToken(input) {
 }
 
 async function login(args) {
+    let loginMessage = 'Access token was saved to '
     let readonly = false
     if (args[0] === '-r' || args[0] === '--readonly') {
+        loginMessage = 'Read-Only ' + loginMessage
         readonly = true
         args.shift()
     }
-    let token = args.pop()
-    if (typeof token !== 'string') {
-        // No token on the command line: show the sign-in URL, then read the
-        // token pasted back from the landing page.
+    const arg = args.pop()
+    if (typeof arg === 'string') {
+        return loginMessage + (await saveToken(arg))
+    }
+
+    // No token given: open the browser and capture it via a loopback listener.
+    let lb = null
+    try {
+        lb = await loopbackLogin(readonly)
+    } catch (e) {
+        // Couldn't bind a local port; fall back to the manual paste prompt.
+    }
+    if (!lb) {
         loginUrl(readonly)
-        token = extractToken(
+        const pasted = extractToken(
             await ask('\nPaste the token (or the whole command) here: ')
         )
+        if (pasted) {
+            return loginMessage + (await saveToken(pasted))
+        }
+        return console.error('usage: login [-r|--readonly] [access_token]')
+    }
+
+    console.log(
+        '\nOpening your browser to sign in. If it does not open, visit:'
+    )
+    console.log(Colors.underline(lb.url))
+    openBrowser(lb.url)
+
+    // Accept whichever arrives first: the loopback capture (local browser) or a
+    // pasted token (e.g. the browser is on another machine / a dev container).
+    const rl = Readline.createInterface({
+        input: process.stdin,
+        output: process.stdout,
+    })
+    let pastedWon = false
+    const pasted = new Promise(resolve =>
+        rl.question(
+            '\nWaiting for sign-in, or paste the token here: ',
+            answer => {
+                pastedWon = true
+                resolve(extractToken(answer))
+            }
+        )
+    )
+    let token
+    try {
+        token = await Promise.race([lb.wait, pasted])
+    } finally {
+        lb.cancel()
+        rl.close()
+    }
+    // A loopback capture leaves the prompt line dangling (no Enter was pressed),
+    // so the success message would print right after it. Return to the start of
+    // the line (and clear it on a TTY) so the result reads cleanly.
+    if (!pastedWon) {
+        process.stdout.write('\r' + (process.stdout.isTTY ? '\x1b[K' : ''))
     }
     if (token) {
-        await FS.writeFile(TOKEN_PATH, token)
-        return 'Access token was saved to ' + TOKEN_PATH
+        return loginMessage + (await saveToken(token))
     }
     console.error('usage: login [-r|--readonly] [access_token]')
 }
@@ -952,10 +1083,22 @@ main(process.argv).then(
     err => {
         console.error(Colors.red(err.localizedMessage || err.message))
         debugPrint(err)
-        // Special error handling case for fatal login failures
-        if (err.statusCode === 401 || err.path === TOKEN_PATH) {
+        // Auth failures: guide the user to re-authenticate. Exit -1 so xargs stops.
+        if (err.path === TOKEN_PATH || err.code === 'ENOENT') {
+            console.error("You're not logged in.")
             loginUrl()
-            // Exit with -1 to ensure xargs stops invoking us
+            process.exitCode = -1
+        } else if (err.statusCode === 401 || err.code === 'unauthenticated') {
+            console.error(
+                'Your access token is invalid or expired. Log in again:'
+            )
+            loginUrl()
+            process.exitCode = -1
+        } else if (err.statusCode === 403) {
+            console.error(
+                'Access denied -- your saved token may be read-only. Log in again for read-write access:'
+            )
+            loginUrl(false)
             process.exitCode = -1
         } else {
             process.exitCode = 1
