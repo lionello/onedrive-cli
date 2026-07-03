@@ -160,6 +160,43 @@ async function getContent(url) {
     return data.buffer()
 }
 
+// Download only [offset, offset+length) of a file via an HTTP Range request,
+// so large files never come down whole. Returns the bytes plus the total size
+// parsed from Content-Range (undefined if the server didn't report it).
+async function getRange(url, offset, length) {
+    const token = await lazyToken()
+    const resp = await fetch(makeAbsolute(url), {
+        agent: httpsAgent,
+        // Byte ranges are only meaningful on the identity representation, so
+        // don't let node-fetch negotiate/inflate gzip (partial gzip won't
+        // decode, and offsets wouldn't line up with the file's bytes).
+        compress: false,
+        headers: {
+            Authorization: 'bearer ' + token,
+            Range: 'bytes=' + offset + '-' + (offset + length - 1),
+        },
+    })
+    const total = (cr => {
+        const m = cr && /\/\s*(\d+)\s*$/.exec(cr)
+        return m ? Number(m[1]) : undefined
+    })(resp.headers.get('content-range'))
+    // Range past EOF: report an empty tail instead of throwing.
+    if (resp.status === 416) {
+        return { buffer: Buffer.alloc(0), total }
+    }
+    await checkResponse(resp)
+    let buffer = await resp.buffer()
+    if (resp.status === 200) {
+        // Server ignored the Range and sent the whole file; slice locally so
+        // the result is still correct (no bandwidth win in this fallback).
+        return {
+            buffer: buffer.subarray(offset, offset + length),
+            total: buffer.length,
+        }
+    }
+    return { buffer, total }
+}
+
 function sanitize(remote) {
     // Escape all characters except the path delimiter '/'
     return (
@@ -1005,6 +1042,369 @@ async function grep(args) {
     }
 }
 
+// --- MCP (Model Context Protocol) server -----------------------------------
+// A read-only stdio MCP server, mirroring github.com/lionello/gdrive-mcp but
+// for OneDrive. It reuses the low-level helpers above (call, getContent,
+// sanitize, absolute) and only ever issues GET requests, so it cannot mutate
+// the drive. Note: nothing here may write to stdout -- that is the JSON-RPC
+// channel. The helpers only log to stderr, and only when stdout is a TTY
+// (which it is not under MCP), so they stay silent.
+
+// Structured equivalents of ls/grep/find that return data instead of printing.
+async function listFolder(path) {
+    const items = []
+    let cont = sanitize(path) + '/children'
+    while (cont) {
+        const result = await call(cont)
+        for (const f of result.value) {
+            items.push({
+                name: f.name,
+                path: absolute(f),
+                type: is_folder(f) ? 'folder' : 'file',
+                size: f.size,
+                lastModified: f.lastModifiedDateTime,
+                ...(f.folder ? { childCount: f.folder.childCount } : {}),
+            })
+        }
+        cont = result['@odata.nextLink']
+    }
+    return items
+}
+
+async function searchContent(query) {
+    const paths = []
+    let cont = '/drive/root/view.search?q=' + encodeURIComponent(query)
+    while (cont) {
+        const result = await call(cont)
+        for (const f of result.value) {
+            paths.push(absolute(f))
+        }
+        cont = result['@odata.nextLink']
+    }
+    return paths
+}
+
+async function findItems(path, expression, acc = []) {
+    let cont = sanitize(path) + '/children'
+    while (cont) {
+        const result = await call(cont)
+        for (const info of result.value) {
+            const matchesType =
+                expression.dirOnly === undefined ||
+                expression.dirOnly === !!info.folder
+            const matchesName =
+                !expression.regex || expression.regex.test(info.name)
+            if (matchesType && matchesName) {
+                acc.push(absolute(info))
+            }
+        }
+        // Recurse into subfolders found on this page.
+        for (const info of result.value.filter(i => i.folder)) {
+            await findItems(absolute(info), expression, acc)
+        }
+        cont = result['@odata.nextLink']
+    }
+    return acc
+}
+
+async function mcp() {
+    const { McpServer } = require('@modelcontextprotocol/sdk/server/mcp.js')
+    const {
+        StdioServerTransport,
+    } = require('@modelcontextprotocol/sdk/server/stdio.js')
+    const { z } = require('zod')
+    const { version } = require('../package.json')
+
+    const server = new McpServer({ name: 'onedrive-cli', version })
+
+    const asJson = data => ({
+        content: [{ type: 'text', text: JSON.stringify(data, undefined, 2) }],
+    })
+
+    // Turn an auth/permission failure into an actionable login hint instead of a
+    // bare API error, so the agent knows to (re-)authenticate via login_onedrive.
+    const authHint = err => {
+        if (err.path === TOKEN_PATH || err.code === 'ENOENT') {
+            return 'Not logged in to OneDrive. Call login_onedrive to sign in, then retry.'
+        }
+        if (err.statusCode === 401 || err.code === 'unauthenticated') {
+            return 'The OneDrive access token is missing or expired. Call login_onedrive to sign in again, then retry.'
+        }
+        if (err.statusCode === 403) {
+            return 'Access denied -- the saved token may be read-only. Call login_onedrive with readonly:false for read-write access, then retry.'
+        }
+        return null
+    }
+
+    // registerTool wrapper: run the handler, but map auth errors to a login hint.
+    const rawRegister = server.registerTool.bind(server)
+    const register = (name, def, handler) =>
+        rawRegister(name, def, async args => {
+            try {
+                return await handler(args)
+            } catch (err) {
+                const hint = authHint(err)
+                if (hint)
+                    return asJson({
+                        ok: false,
+                        needsLogin: true,
+                        message: hint,
+                    })
+                throw err
+            }
+        })
+
+    register(
+        'list_onedrive_folder',
+        {
+            title: 'List OneDrive folder',
+            description:
+                'List the direct children (files and folders) of a OneDrive folder. Pass an empty string to list the drive root.',
+            inputSchema: {
+                path: z
+                    .string()
+                    .default('')
+                    .describe(
+                        "Remote folder path, e.g. 'Documents/Reports'. Empty string for the drive root."
+                    ),
+            },
+        },
+        async ({ path }) => asJson(await listFolder(path || ''))
+    )
+
+    register(
+        'search_onedrive_content',
+        {
+            title: 'Search OneDrive (full-text)',
+            description:
+                'Full-text search across the whole drive (matches file names and contents). Returns the paths of matching items, like `grep -rl`.',
+            inputSchema: {
+                query: z.string().describe('The search query.'),
+            },
+        },
+        async ({ query }) => asJson(await searchContent(query))
+    )
+
+    register(
+        'find_onedrive_files',
+        {
+            title: 'Find OneDrive files by name',
+            description:
+                'Recursively find items by name under a folder, using a shell glob pattern (e.g. "*.pdf"). Optionally restrict to files or folders.',
+            inputSchema: {
+                path: z
+                    .string()
+                    .default('')
+                    .describe(
+                        'Folder to search under. Empty string for the drive root.'
+                    ),
+                name: z
+                    .string()
+                    .optional()
+                    .describe(
+                        'Case-insensitive glob matched against item names, e.g. "*.docx". Omit to match everything.'
+                    ),
+                type: z
+                    .enum(['file', 'folder'])
+                    .optional()
+                    .describe('Restrict results to files or folders.'),
+            },
+        },
+        async ({ path, name, type }) => {
+            const expression = {}
+            if (name) {
+                expression.regex = globToRegExp(name, 'i')
+            }
+            if (type) {
+                expression.dirOnly = type === 'folder'
+            }
+            return asJson(await findItems(path || '', expression))
+        }
+    )
+
+    register(
+        'read_onedrive_file',
+        {
+            title: 'Read OneDrive file',
+            description:
+                'Read a byte range of a file via an HTTP Range request, so only the requested bytes are downloaded (scales to large files). Returns the bytes decoded as UTF-8 plus totalBytes and hasMore so you can page. A range may split a line or a multi-byte UTF-8 character at either boundary. Binary files will be garbled.',
+            inputSchema: {
+                path: z
+                    .string()
+                    .describe("Remote file path, e.g. 'Documents/notes.txt'."),
+                offset: z
+                    .number()
+                    .int()
+                    .min(0)
+                    .default(0)
+                    .describe('Byte offset to start reading from.'),
+                length: z
+                    .number()
+                    .int()
+                    .min(1)
+                    .max(1048576)
+                    .default(65536)
+                    .describe('Number of bytes to read (max 1 MiB).'),
+            },
+        },
+        async ({ path, offset, length }) => {
+            const { buffer, total } = await getRange(
+                sanitize(path) + '/content',
+                offset,
+                length
+            )
+            return asJson({
+                path,
+                offset,
+                bytesReturned: buffer.length,
+                totalBytes: total,
+                hasMore: total !== undefined && offset + buffer.length < total,
+                content: buffer.toString('utf8'),
+            })
+        }
+    )
+
+    register(
+        'stat_onedrive_item',
+        {
+            title: 'Stat OneDrive item',
+            description: 'Return the full metadata for a file or folder.',
+            inputSchema: {
+                path: z
+                    .string()
+                    .default('')
+                    .describe('Remote path. Empty string for the drive root.'),
+            },
+        },
+        async ({ path }) => asJson(await getItem(path || ''))
+    )
+
+    register(
+        'onedrive_storage',
+        {
+            title: 'OneDrive storage quota',
+            description:
+                'Report the storage quota (total, used, remaining) for the available drives.',
+            inputSchema: {},
+        },
+        async () => {
+            const result = await call('/drives')
+            return asJson(
+                result.value.map(d => ({
+                    id: d.id,
+                    status: d.status ? d.status.state : null,
+                    quota: d.quota,
+                }))
+            )
+        }
+    )
+
+    register(
+        'login_onedrive',
+        {
+            title: 'Log in to OneDrive',
+            description:
+                'Authenticate to OneDrive when calls fail with an authentication error. Presents a sign-in link out-of-band and captures the token locally via a loopback listener -- nothing sensitive passes through this conversation. If the link cannot be presented or the listener is unreachable (e.g. a dev container), it returns loginUrl; open it, sign in, then call this tool again with the token shown on the page.',
+            inputSchema: {
+                token: z
+                    .string()
+                    .optional()
+                    .describe(
+                        'Fallback: an access token copied from the callback page, saved directly. Omit to start the interactive sign-in.'
+                    ),
+                readonly: z
+                    .boolean()
+                    .default(true)
+                    .describe(
+                        'Request read-only access (onedrive.readonly). Defaults to true since this MCP server only reads; set false to grant read-write.'
+                    ),
+            },
+        },
+        async ({ token, readonly }) => {
+            if (token) {
+                await saveToken(extractToken(token))
+                return asJson({ ok: true, message: 'Access token saved.' })
+            }
+            let lb = null
+            try {
+                lb = await loopbackLogin(readonly)
+            } catch (e) {
+                // Couldn't bind a local port; fall through to the paste path.
+            }
+            const url = lb ? lb.url : buildLoginUrl(readonly)
+
+            // Only present the link via URL-mode elicitation if the client
+            // actually advertises support -- attempting it otherwise makes the
+            // client surface an "unsupported" error. When supported, wait for
+            // the loopback to catch the token and finish here.
+            const caps = server.server.getClientCapabilities()
+            const canUrlElicit = !!(
+                caps &&
+                caps.elicitation &&
+                caps.elicitation.url
+            )
+            if (canUrlElicit && lb) {
+                try {
+                    const result = await server.server.elicitInput({
+                        mode: 'url',
+                        message:
+                            'Sign in to OneDrive in your browser to authorize this server. The token is captured locally; nothing is pasted here.',
+                        url,
+                        elicitationId: Crypto.randomBytes(8).toString('hex'),
+                    })
+                    if (result.action !== 'accept') {
+                        lb.cancel()
+                        return asJson({
+                            ok: false,
+                            action: result.action,
+                            message: 'Login was ' + result.action + '.',
+                        })
+                    }
+                    const captured = await withTimeout(lb.wait, 120000)
+                    await saveToken(captured)
+                    lb.cancel()
+                    return asJson({ ok: true, message: 'Access token saved.' })
+                } catch (err) {
+                    // Presented, but the token didn't arrive in time.
+                    lb.cancel()
+                    return asJson({
+                        ok: false,
+                        loginUrl: url,
+                        message:
+                            'Did not receive the token automatically (expected in dev containers, where the browser cannot reach this server). Open loginUrl, sign in, then call login_onedrive again with the token from the page.',
+                    })
+                }
+            }
+
+            // No URL-mode elicitation (or no loopback): this is NOT an error --
+            // return the sign-in URL for the agent to hand to the user. Keep the
+            // loopback listening so the token is captured and saved out-of-band
+            // when the user opens the link (every request re-reads the token
+            // file, so a subsequent call just works).
+            if (lb) {
+                lb.wait.then(saveToken, () => {}).finally(() => lb.cancel())
+                setTimeout(() => lb.cancel(), 5 * 60 * 1000).unref()
+                return asJson({
+                    ok: false,
+                    pending: true,
+                    loginUrl: url,
+                    message:
+                        'Ask the user to open loginUrl in a browser and sign in. If the browser is on this machine, the token is captured and saved automatically -- then just retry the request. In a dev container (browser elsewhere), have the user copy the token shown on the page and call login_onedrive again with it in the token argument.',
+                })
+            }
+            return asJson({
+                ok: false,
+                loginUrl: url,
+                message:
+                    'Ask the user to open loginUrl and sign in, then call login_onedrive again with the token shown on the page.',
+            })
+        }
+    )
+
+    const transport = new StdioServerTransport()
+    await server.connect(transport)
+}
+
 async function main(argv) {
     // Disable colors when piping to another command
     if (!process.env.FORCE_COLOR && !process.stdout.isTTY) {
@@ -1020,7 +1420,7 @@ async function main(argv) {
                 )
             )
             console.log(
-                '\nusage: onedrive COMMAND [arguments]\n\ncommands: cat chmod cp df find grep help ln login ls mkdir mv rm sendmail stat wget'
+                '\nusage: onedrive COMMAND [arguments]\n\ncommands: cat chmod cp df find grep help ln login ls mcp mkdir mv rm sendmail stat wget'
             )
             return
 
@@ -1050,6 +1450,9 @@ async function main(argv) {
 
         case 'ls':
             return ls(argv.slice(3))
+
+        case 'mcp':
+            return mcp()
 
         case 'mkdir':
             return mkdir(argv.slice(3))

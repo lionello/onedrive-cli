@@ -27,10 +27,12 @@
     "author": "Lionello Lunesu",
     "license": "MIT",
     "dependencies": {
+        "@modelcontextprotocol/sdk": "^1.29.0",
         "colors": "^1.4.0",
         "mime": "^1.6.0",
         "moment": "^2.30.1",
-        "node-fetch": "^2.7.0"
+        "node-fetch": "^2.7.0",
+        "zod": "^4.4.3"
     },
     "devDependencies": {
         "eslint": "^8.56.0",

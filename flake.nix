@@ -23,7 +23,7 @@
 
           # Update after changing package-lock.json:
           #   nix run nixpkgs#prefetch-npm-deps -- package-lock.json
-          npmDepsHash = "sha256-8H3RMoLsPJrWWgAXj9u3BiCUToEHsLWAFn+OIjyW3s4=";
+          npmDepsHash = "sha256-2NRyCuOtuu2SZT8B1Z5h3P5PspoSDsOnZmdy31lrciM=";
 
           # Pure-JS CLI: no build step, just install deps and link the bin.
           dontNpmBuild = true;
