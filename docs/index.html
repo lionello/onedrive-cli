@@ -437,12 +437,16 @@
 
 <h2>Development</h2>
 
-<p>The provided <code>shell.nix</code> for the <a href="https://nixos.org">Nix</a> package manager contains all development dependencies.
-Use it with <code>nix-shell</code> or <a href="https://direnv.net">Direnv</a>&#39;s <code>use nix</code>.</p>
+<p>A <a href="https://nixos.org">Nix</a> flake provides the package and a dev shell with all
+dependencies. Run <code>nix develop</code> (or use <a href="https://direnv.net">Direnv</a>&#39;s <code>use flake</code>)
+for the shell, and <code>nix build</code> / <code>nix run</code> to build or run the CLI. The legacy
+<code>shell.nix</code> still works with <code>nix-shell</code>.</p>
 
-<h3>Update Nix files</h3>
+<h3>Update the dependency hash</h3>
 
-<pre><code class="sh">node2nix -l package-lock.json
+<p>After changing <code>package-lock.json</code>, refresh <code>npmDepsHash</code> in <code>flake.nix</code>:</p>
+
+<pre><code class="sh">nix run nixpkgs#prefetch-npm-deps -- package-lock.json
 </code></pre>
 
 <h2>Installation</h2>

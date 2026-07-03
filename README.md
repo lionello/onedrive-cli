@@ -4,13 +4,17 @@ Cross-platform command line interface for OneDrive (Personal)
 
 ## Development
 
-The provided `shell.nix` for the [Nix](https://nixos.org) package manager contains all development dependencies.
-Use it with `nix-shell` or [Direnv](https://direnv.net)'s `use nix`.
+A [Nix](https://nixos.org) flake provides the package and a dev shell with all
+dependencies. Run `nix develop` (or use [Direnv](https://direnv.net)'s `use flake`)
+for the shell, and `nix build` / `nix run` to build or run the CLI. The legacy
+`shell.nix` still works with `nix-shell`.
 
-### Update Nix files
+### Update the dependency hash
+
+After changing `package-lock.json`, refresh `npmDepsHash` in `flake.nix`:
 
 ```sh
-node2nix -l package-lock.json
+nix run nixpkgs#prefetch-npm-deps -- package-lock.json
 ```
 
 ## Installation

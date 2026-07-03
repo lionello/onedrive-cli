@@ -6,8 +6,14 @@
     flake-utils.url = "github:numtide/flake-utils";
   };
 
-  outputs = { self, nixpkgs, flake-utils }:
-    flake-utils.lib.eachDefaultSystem (system:
+  outputs =
+    {
+      self,
+      nixpkgs,
+      flake-utils,
+    }:
+    flake-utils.lib.eachDefaultSystem (
+      system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
         onedrive-cli = pkgs.buildNpmPackage {
@@ -36,12 +42,7 @@
 
         apps.default = flake-utils.lib.mkApp { drv = onedrive-cli; };
 
-        devShells.default = pkgs.mkShell {
-          packages = [
-            pkgs.nodejs_24
-            pkgs.ruby.gems.redcarpet # for readme generation
-          ];
-          NODE_ENV = "development";
-        };
-      });
+        devShells.default = import ./shell.nix { inherit pkgs; };
+      }
+    );
 }
