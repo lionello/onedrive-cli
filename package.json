@@ -1,6 +1,6 @@
 {
     "name": "@lionello/onedrive-cli",
-    "version": "1.2.0",
+    "version": "1.3.0",
     "description": "OneDrive CLI",
     "bin": {
         "onedrive-cli": "bin/onedrive"
