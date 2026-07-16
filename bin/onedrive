@@ -753,6 +753,27 @@ async function login(args) {
         return loginMessage + (await saveToken(arg))
     }
 
+    // No token given. The interactive flow below opens a browser and blocks on
+    // stdin/the loopback listener -- but without a terminal (CI, or invoked by an
+    // agent) stdin never delivers a pasted token and no browser can reach the
+    // loopback, so it would hang until the job times out. Fail fast instead:
+    // print the sign-in URL and tell the caller to re-run with the token.
+    // ($CI covers runners that allocate a pseudo-TTY but still can't sign in;
+    // CI=false is the conventional opt-out, so honor it like ci-info does.)
+    if (!process.stdin.isTTY || (process.env.CI && process.env.CI !== 'false')) {
+        throw Error(
+            'Cannot sign in interactively without a terminal (e.g. in CI or ' +
+                'when invoked by an agent).\nOpen this URL in a browser, sign ' +
+                'in, then re-run with the token from the callback page:\n\n  ' +
+                buildLoginUrl(readonly) +
+                '\n\n  ' +
+                commandName() +
+                ' login' +
+                (readonly ? ' -r' : '') +
+                ' <access_token>'
+        )
+    }
+
     // No token given: open the browser and capture it via a loopback listener.
     let lb = null
     try {
