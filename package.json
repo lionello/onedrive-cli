@@ -8,7 +8,11 @@
     "scripts": {
         "format": "prettier -w bin/onedrive docs/oauthcallbackhandler.html",
         "lint": "npx eslint bin/onedrive",
-        "readme": "cat docs/_header.html > docs/index.html && redcarpet --parse fenced-code-blocks --parse tables --parse autolink --parse strikethrough README.md >> docs/index.html && cat docs/_footer.html >> docs/index.html"
+        "readme": "cat docs/_header.html > docs/index.html && redcarpet --parse fenced-code-blocks --parse tables --parse autolink --parse strikethrough README.md >> docs/index.html && cat docs/_footer.html >> docs/index.html",
+        "preversion": "npm run lint",
+        "release:patch": "npm version patch && git push --follow-tags",
+        "release:minor": "npm version minor && git push --follow-tags",
+        "release:major": "npm version major && git push --follow-tags"
     },
     "keywords": [
         "onedrive",
