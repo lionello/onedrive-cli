@@ -668,6 +668,17 @@ function loginUrl(readonly) {
 // `url` to sign in, `wait` resolves with the captured token, `cancel` shuts the
 // listener down. The token goes browser -> 127.0.0.1 directly, so it never
 // passes through stdio or the model.
+function withTimeout(promise, ms) {
+    let timer
+    const timeout = new Promise((_, reject) => {
+        timer = setTimeout(
+            () => reject(new Error('Timed out after ' + ms + 'ms')),
+            ms
+        )
+    })
+    return Promise.race([promise, timeout]).finally(() => clearTimeout(timer))
+}
+
 function loopbackLogin(readonly) {
     const nonce = Crypto.randomBytes(16).toString('hex')
     const server = Http.createServer()
