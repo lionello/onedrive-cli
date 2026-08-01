@@ -46,6 +46,7 @@ nix-env -if https://github.com/lionello/onedrive-cli/archive/master.tar.gz -A pa
 
 This little utility supports the following commands:
 
+-   `album` - list, create, or edit photo albums (`ls`/`create`/`add`/`rm`)
 -   `cat` - dumps the contents of a file to stdout
 -   `chmod` - change sharing permissions
 -   `cp` - copies local file(s) to OneDrive or vice-versa
@@ -86,6 +87,19 @@ This little utility supports the following commands:
 
 `onedrive find 'Pictures/Camera Roll' -regex 2015 -type f -print0 | xargs -0 onedrive mv -t :/Pictures/2015/`
 
+##### Create an album and add photos to it
+
+```sh
+onedrive album create 'Summer 2026'
+onedrive album add 'Summer 2026' 'Pictures/Camera Roll/IMG_1234.jpg'
+onedrive albums                # list all albums
+onedrive albums 'Summer 2026'  # list the photos in one album
+```
+
+Albums are OneDrive [bundles](https://learn.microsoft.com/onedrive/developer/rest-api/api/drive_list_bundles):
+they live outside the folder hierarchy and only reference the files, so
+`album rm` removes a photo from the album without deleting the file.
+
 ## MCP server
 
 `onedrive mcp` starts a read-only [Model Context Protocol](https://modelcontextprotocol.io)
@@ -97,6 +111,7 @@ cannot modify the drive. It exposes these tools:
 -   `list_onedrive_folder` - list the direct children of a folder
 -   `search_onedrive_content` - full-text search across the whole drive
 -   `find_onedrive_files` - recursively find items by name glob
+-   `list_onedrive_albums` - list the photo albums, or the items in one album
 -   `read_onedrive_file` - read a file's contents as text
 -   `stat_onedrive_item` - return full metadata for an item
 -   `onedrive_storage` - report storage quota for the available drives
