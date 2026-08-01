@@ -527,14 +527,40 @@
                             encodeURIComponent(lb[1]) +
                             '&token=' +
                             encodeURIComponent(access_token)
-                        var delivered = function () {
-                            statusText.textContent =
-                                'Token sent to your terminal — you can close this tab.'
-                        }
-                        fetch(target, { mode: 'cors' }).then(delivered, function () {
-                            // fetch blocked? fire an <img> GET (delivery only).
-                            new Image().src = target
-                        })
+                        // The listener replies 200 only when it accepted the
+                        // token (nonce matched), and its ACAO:* header lets us
+                        // read that status -- so response.ok is a genuine ack,
+                        // not just "something answered on that port".
+                        fetch(target, { mode: 'cors' })
+                            .then(function (resp) {
+                                if (resp.ok) {
+                                    accepted()
+                                }
+                                // Non-2xx: the CLI refused the token (stale or
+                                // tampered state) -- keep the copy fallback.
+                            })
+                            .catch(function () {
+                                // fetch blocked? fire an <img> GET as a last
+                                // resort. Delivery only: an image load gives no
+                                // readable status, so never claim success here.
+                                new Image().src = target
+                            })
+                    }
+
+                    // The CLI confirmed it saved the token: say so and retire
+                    // the manual copy UI, so the page reflects what happened
+                    // instead of instructing a step that's already done.
+                    function accepted() {
+                        statusText.textContent =
+                            'The CLI received the token — you can close this tab.'
+                        document.querySelector('h1').textContent = "You're in."
+                        document.querySelector('.lead').innerHTML =
+                            'The token was delivered to <b>your terminal</b> and saved. No need to copy anything.'
+                        document.querySelector('.term').style.display = 'none'
+                        document.querySelector('.actions').style.display =
+                            'none'
+                        document.querySelector('.hint').textContent =
+                            'You can close this tab and return to your terminal.'
                     }
                 }
 
