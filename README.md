@@ -99,6 +99,8 @@ onedrive albums 'Summer 2026'  # list the photos in one album
 Albums are OneDrive [bundles](https://learn.microsoft.com/onedrive/developer/rest-api/api/drive_list_bundles):
 they live outside the folder hierarchy and only reference the files, so
 `album rm` removes a photo from the album without deleting the file.
+Deleting an album itself is not supported by the API — use the OneDrive
+web UI for that.
 
 ## MCP server
 

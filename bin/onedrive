@@ -114,6 +114,31 @@ async function saveToken(token) {
     return TOKEN_PATH
 }
 
+// The consumer OneDrive backend intermittently answers 503 (e.g.
+// itemDisabledDueToUserContentMigration while Microsoft migrates accounts to
+// the new photos stack) or throttles with 429, and an immediate retry
+// typically succeeds. Honor Retry-After when the server sends one. Bodies are
+// always buffered strings/Buffers here (never streams), so re-sending is safe.
+async function fetchRetry(url, options, attempts = 3) {
+    for (let attempt = 1; ; ++attempt) {
+        const resp = await fetch(url, options)
+        if (
+            (resp.status !== 503 && resp.status !== 429) ||
+            attempt >= attempts
+        ) {
+            return resp
+        }
+        const after = Number(resp.headers.get('retry-after')) || attempt
+        if (process.stdout.isTTY) {
+            console.warn(
+                Colors.yellow(String(resp.status)),
+                'retrying in ' + after + 's'
+            )
+        }
+        await new Promise(resolve => setTimeout(resolve, after * 1000))
+    }
+}
+
 async function call(url, method, body, headers = {}) {
     const token = await lazyToken()
     const options = {
@@ -139,7 +164,7 @@ async function call(url, method, body, headers = {}) {
         options.headers['Content-Type'] = 'application/json'
     }
 
-    const resp = await fetch(makeAbsolute(url), options)
+    const resp = await fetchRetry(makeAbsolute(url), options)
     const data = await checkResponse(resp)
     return data.json()
 }
@@ -150,7 +175,7 @@ async function getContent(url) {
     }
 
     const token = await lazyToken()
-    const resp = await fetch(makeAbsolute(url), {
+    const resp = await fetchRetry(makeAbsolute(url), {
         agent: httpsAgent,
         headers: {
             Authorization: 'bearer ' + token,
@@ -165,7 +190,7 @@ async function getContent(url) {
 // parsed from Content-Range (undefined if the server didn't report it).
 async function getRange(url, offset, length) {
     const token = await lazyToken()
-    const resp = await fetch(makeAbsolute(url), {
+    const resp = await fetchRetry(makeAbsolute(url), {
         agent: httpsAgent,
         // Byte ranges are only meaningful on the identity representation, so
         // don't let node-fetch negotiate/inflate gzip (partial gzip won't
@@ -536,7 +561,7 @@ async function del(url) {
     if (process.stdout.isTTY) {
         console.warn(Colors.yellow('DELETE'), decodeURIComponent(url))
     }
-    const resp = await fetch(makeAbsolute(url), {
+    const resp = await fetchRetry(makeAbsolute(url), {
         agent: httpsAgent,
         method: 'DELETE',
         headers: {
@@ -1088,14 +1113,19 @@ async function grep(args) {
 Albums are "bundles" -- driveItems with a bundle facet whose bundle.album is
 set. They live outside the folder hierarchy, so they are addressed by item id
 rather than by path:
-  GET    /drive/bundles                          list bundles (albums and multi-file shares)
-  POST   /drive/bundles                          create a bundle/album
-  POST   /drive/bundles/{id}/children            add an existing item (by id) to the bundle
-  DELETE /drive/bundles/{id}/children/{item-id}  remove an item from the bundle (keeps the file)
+  GET    /drive/bundles?filter=bundle/album ne null   list albums
+  POST   /drive/bundles                               create a bundle/album
+  POST   /drive/bundles/{id}/children                 add an existing item (by id) to the bundle
+  DELETE /drive/bundles/{id}/children/{item-id}       remove an item from the bundle (keeps the file)
+The album filter is not just an optimization: on accounts migrated to the new
+photos stack, the unfiltered enumeration serves a stale pre-migration view
+that misses newly created albums, while the filtered query hits the current
+album index. (Deleting an album bundle is rejected with 403 by this API; that
+needs the OneDrive web UI.)
 */
 async function listAlbums() {
     const albums = []
-    let cont = '/drive/bundles'
+    let cont = '/drive/bundles?filter=bundle/album%20ne%20null'
     while (cont) {
         const result = await call(cont)
         for (const b of result.value) {
@@ -1127,13 +1157,14 @@ async function albumItems(album) {
     return items
 }
 
-// Items in an album keep their real parent folder, so show that path when we
-// have it (usable with cp/cat/etc.); fall back to the bare name for items
-// without one (e.g. added from someone else's share).
+// Items in an album keep their real parent folder when it is on this drive,
+// so show that path (usable with cp/cat/etc.). On accounts migrated to the
+// new photos stack, album children are presented under the album itself on a
+// separate internal drive (parentReference.path like /drives/b!…/root:/Album)
+// -- no usable path there, so fall back to the bare name.
 function albumItemPath(info) {
-    return info.parentReference && info.parentReference.path
-        ? absolute(info)
-        : info.name
+    const path = info.parentReference && info.parentReference.path
+    return path && path.startsWith('/drive/root') ? absolute(info) : info.name
 }
 
 async function album(args) {
