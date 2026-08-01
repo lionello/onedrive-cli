@@ -114,6 +114,31 @@ async function saveToken(token) {
     return TOKEN_PATH
 }
 
+// The consumer OneDrive backend intermittently answers 503 (e.g.
+// itemDisabledDueToUserContentMigration while Microsoft migrates accounts to
+// the new photos stack) or throttles with 429, and an immediate retry
+// typically succeeds. Honor Retry-After when the server sends one. Bodies are
+// always buffered strings/Buffers here (never streams), so re-sending is safe.
+async function fetchRetry(url, options, attempts = 3) {
+    for (let attempt = 1; ; ++attempt) {
+        const resp = await fetch(url, options)
+        if (
+            (resp.status !== 503 && resp.status !== 429) ||
+            attempt >= attempts
+        ) {
+            return resp
+        }
+        const after = Number(resp.headers.get('retry-after')) || attempt
+        if (process.stdout.isTTY) {
+            console.warn(
+                Colors.yellow(String(resp.status)),
+                'retrying in ' + after + 's'
+            )
+        }
+        await new Promise(resolve => setTimeout(resolve, after * 1000))
+    }
+}
+
 async function call(url, method, body, headers = {}) {
     const token = await lazyToken()
     const options = {
@@ -139,7 +164,7 @@ async function call(url, method, body, headers = {}) {
         options.headers['Content-Type'] = 'application/json'
     }
 
-    const resp = await fetch(makeAbsolute(url), options)
+    const resp = await fetchRetry(makeAbsolute(url), options)
     const data = await checkResponse(resp)
     return data.json()
 }
@@ -150,7 +175,7 @@ async function getContent(url) {
     }
 
     const token = await lazyToken()
-    const resp = await fetch(makeAbsolute(url), {
+    const resp = await fetchRetry(makeAbsolute(url), {
         agent: httpsAgent,
         headers: {
             Authorization: 'bearer ' + token,
@@ -165,7 +190,7 @@ async function getContent(url) {
 // parsed from Content-Range (undefined if the server didn't report it).
 async function getRange(url, offset, length) {
     const token = await lazyToken()
-    const resp = await fetch(makeAbsolute(url), {
+    const resp = await fetchRetry(makeAbsolute(url), {
         agent: httpsAgent,
         // Byte ranges are only meaningful on the identity representation, so
         // don't let node-fetch negotiate/inflate gzip (partial gzip won't
@@ -529,15 +554,14 @@ async function cp(args) {
     }
 }
 
-/*
-DELETE /drive/root:/{path}:
-Returns 204 No Content on success.
-Supports files and folders (recursive delete).
-*/
-async function rmItem(remote) {
-    remote = sanitize(remote)
+// DELETE returns 204 No Content on success, so don't go through call()
+// (which would try to parse a JSON body that isn't there).
+async function del(url) {
     const token = await lazyToken()
-    const resp = await fetch(makeAbsolute(remote), {
+    if (process.stdout.isTTY) {
+        console.warn(Colors.yellow('DELETE'), decodeURIComponent(url))
+    }
+    const resp = await fetchRetry(makeAbsolute(url), {
         agent: httpsAgent,
         method: 'DELETE',
         headers: {
@@ -545,7 +569,15 @@ async function rmItem(remote) {
         },
     })
     await checkResponse(resp)
-    // 204 No Content on success — nothing to parse
+}
+
+/*
+DELETE /drive/root:/{path}:
+Returns 204 No Content on success.
+Supports files and folders (recursive delete).
+*/
+function rmItem(remote) {
+    return del(sanitize(remote))
 }
 
 async function rm(args) {
@@ -771,7 +803,10 @@ async function login(args) {
     // print the sign-in URL and tell the caller to re-run with the token.
     // ($CI covers runners that allocate a pseudo-TTY but still can't sign in;
     // CI=false is the conventional opt-out, so honor it like ci-info does.)
-    if (!process.stdin.isTTY || (process.env.CI && process.env.CI !== 'false')) {
+    if (
+        !process.stdin.isTTY ||
+        (process.env.CI && process.env.CI !== 'false')
+    ) {
         throw Error(
             'Cannot sign in interactively without a terminal (e.g. in CI or ' +
                 'when invoked by an agent).\nOpen this URL in a browser, sign ' +
@@ -1074,6 +1109,142 @@ async function grep(args) {
     }
 }
 
+/*
+Albums are "bundles" -- driveItems with a bundle facet whose bundle.album is
+set. They live outside the folder hierarchy, so they are addressed by item id
+rather than by path:
+  GET    /drive/bundles?filter=bundle/album ne null   list albums
+  POST   /drive/bundles                               create a bundle/album
+  POST   /drive/bundles/{id}/children                 add an existing item (by id) to the bundle
+  DELETE /drive/bundles/{id}/children/{item-id}       remove an item from the bundle (keeps the file)
+The album filter is not just an optimization: on accounts migrated to the new
+photos stack, the unfiltered enumeration serves a stale pre-migration view
+that misses newly created albums, while the filtered query hits the current
+album index. (Deleting an album bundle is rejected with 403 by this API; that
+needs the OneDrive web UI.)
+*/
+async function listAlbums() {
+    const albums = []
+    let cont = '/drive/bundles?filter=bundle/album%20ne%20null'
+    while (cont) {
+        const result = await call(cont)
+        for (const b of result.value) {
+            if (b.bundle && b.bundle.album) {
+                albums.push(b)
+            }
+        }
+        cont = result['@odata.nextLink']
+    }
+    return albums
+}
+
+async function albumByName(name) {
+    const album = (await listAlbums()).find(a => a.name === name)
+    if (!album) {
+        throw Error('No such album: ' + name)
+    }
+    return album
+}
+
+async function albumItems(album) {
+    const items = []
+    let cont = '/drive/items/' + album.id + '/children'
+    while (cont) {
+        const result = await call(cont)
+        items.push(...result.value)
+        cont = result['@odata.nextLink']
+    }
+    return items
+}
+
+// Items in an album keep their real parent folder when it is on this drive,
+// so show that path (usable with cp/cat/etc.). On accounts migrated to the
+// new photos stack, album children are presented under the album itself on a
+// separate internal drive (parentReference.path like /drives/b!…/root:/Album)
+// -- no usable path there, so fall back to the bare name.
+function albumItemPath(info) {
+    const path = info.parentReference && info.parentReference.path
+    return path && path.startsWith('/drive/root') ? absolute(info) : info.name
+}
+
+async function album(args) {
+    const sub = args.shift()
+    switch (sub) {
+        case undefined:
+        case 'ls': {
+            if (args.length === 0) {
+                for (const a of await listAlbums()) {
+                    console.log(
+                        padLeft(a.bundle.childCount, 4),
+                        Colors.bold(Colors.blue(a.name))
+                    )
+                }
+                return
+            }
+            for (const name of args) {
+                const items = await albumItems(await albumByName(name))
+                for (const info of items) {
+                    console.log(albumItemPath(info))
+                }
+            }
+            return
+        }
+
+        case 'create': {
+            if (args.length !== 1) {
+                return console.error('usage: album create name')
+            }
+            const result = await call('/drive/bundles', 'POST', {
+                name: args[0],
+                bundle: { album: {} },
+                '@name.conflictBehavior': 'fail',
+            })
+            console.log(`album: created album '${result.name}'`, result.id)
+            return
+        }
+
+        case 'add': {
+            if (args.length < 2) {
+                return console.error('usage: album add album file ...')
+            }
+            const target = await albumByName(args[0])
+            for (const cur of args.slice(1)) {
+                const info = await getItem(cur)
+                await call(
+                    '/drive/bundles/' + target.id + '/children',
+                    'POST',
+                    {
+                        id: info.id,
+                    }
+                )
+                console.log(cur, '->', target.name)
+            }
+            return
+        }
+
+        case 'rm': {
+            if (args.length < 2) {
+                return console.error('usage: album rm album file ...')
+            }
+            const target = await albumByName(args[0])
+            for (const cur of args.slice(1)) {
+                const info = await getItem(cur)
+                await del(
+                    '/drive/bundles/' + target.id + '/children/' + info.id
+                )
+                console.log(`removed '${cur}' from '${target.name}'`)
+            }
+            return
+        }
+
+        default:
+            console.error('usage: album [ls [name ...]]')
+            console.error('       album create name')
+            console.error('       album add album file ...')
+            console.error('       album rm album file ...')
+    }
+}
+
 // --- MCP (Model Context Protocol) server -----------------------------------
 // A read-only stdio MCP server, mirroring github.com/lionello/gdrive-mcp but
 // for OneDrive. It reuses the low-level helpers above (call, getContent,
@@ -1297,6 +1468,45 @@ async function mcp() {
     )
 
     register(
+        'list_onedrive_albums',
+        {
+            title: 'List OneDrive albums',
+            description:
+                'List the photo/video albums in the OneDrive, or the items inside one album. Albums live outside the folder hierarchy; the returned item paths are the real file locations, usable with the other tools.',
+            inputSchema: {
+                album: z
+                    .string()
+                    .optional()
+                    .describe(
+                        'Album name to list the contents of. Omit to list all albums.'
+                    ),
+            },
+        },
+        async ({ album }) => {
+            if (album) {
+                const items = await albumItems(await albumByName(album))
+                return asJson(
+                    items.map(f => ({
+                        name: f.name,
+                        path: albumItemPath(f),
+                        type: is_folder(f) ? 'folder' : 'file',
+                        size: f.size,
+                        lastModified: f.lastModifiedDateTime,
+                    }))
+                )
+            }
+            return asJson(
+                (await listAlbums()).map(a => ({
+                    name: a.name,
+                    itemCount: a.bundle.childCount,
+                    created: a.createdDateTime,
+                    lastModified: a.lastModifiedDateTime,
+                }))
+            )
+        }
+    )
+
+    register(
         'stat_onedrive_item',
         {
             title: 'Stat OneDrive item',
@@ -1452,9 +1662,16 @@ async function main(argv) {
                 )
             )
             console.log(
-                '\nusage: onedrive COMMAND [arguments]\n\ncommands: cat chmod cp df find grep help ln login ls mcp mkdir mv rm sendmail stat wget'
+                '\nusage: onedrive COMMAND [arguments]\n\ncommands: album cat chmod cp df find grep help ln login ls mcp mkdir mv rm sendmail stat wget'
             )
             return
+
+        case 'album':
+            return album(argv.slice(3))
+
+        // Listing shortcut: `albums` = `album ls`, `albums NAME` = `album ls NAME`
+        case 'albums':
+            return album(['ls', ...argv.slice(3)])
 
         case 'cat':
             return cat(argv.slice(3))
