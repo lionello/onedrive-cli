@@ -476,6 +476,7 @@ $ bin/onedrive login
 <p>This little utility supports the following commands:</p>
 
 <ul>
+<li>  <code>album</code> - list, create, or edit photo albums (<code>ls</code>/<code>create</code>/<code>add</code>/<code>rm</code>)</li>
 <li>  <code>cat</code> - dumps the contents of a file to stdout</li>
 <li>  <code>chmod</code> - change sharing permissions</li>
 <li>  <code>cp</code> - copies local file(s) to OneDrive or vice-versa</li>
@@ -517,6 +518,20 @@ $ bin/onedrive login
 
 <p><code>onedrive find &#39;Pictures/Camera Roll&#39; -regex 2015 -type f -print0 | xargs -0 onedrive mv -t :/Pictures/2015/</code></p>
 
+<h5>Create an album and add photos to it</h5>
+
+<pre><code class="sh">onedrive album create &#39;Summer 2026&#39;
+onedrive album add &#39;Summer 2026&#39; &#39;Pictures/Camera Roll/IMG_1234.jpg&#39;
+onedrive albums                # list all albums
+onedrive albums &#39;Summer 2026&#39;  # list the photos in one album
+</code></pre>
+
+<p>Albums are OneDrive <a href="https://learn.microsoft.com/onedrive/developer/rest-api/api/drive_list_bundles">bundles</a>:
+they live outside the folder hierarchy and only reference the files, so
+<code>album rm</code> removes a photo from the album without deleting the file.
+Deleting an album itself is not supported by the API — use the OneDrive
+web UI for that.</p>
+
 <h2>MCP server</h2>
 
 <p><code>onedrive mcp</code> starts a read-only <a href="https://modelcontextprotocol.io">Model Context Protocol</a>
@@ -529,6 +544,7 @@ cannot modify the drive. It exposes these tools:</p>
 <li>  <code>list_onedrive_folder</code> - list the direct children of a folder</li>
 <li>  <code>search_onedrive_content</code> - full-text search across the whole drive</li>
 <li>  <code>find_onedrive_files</code> - recursively find items by name glob</li>
+<li>  <code>list_onedrive_albums</code> - list the photo albums, or the items in one album</li>
 <li>  <code>read_onedrive_file</code> - read a file&#39;s contents as text</li>
 <li>  <code>stat_onedrive_item</code> - return full metadata for an item</li>
 <li>  <code>onedrive_storage</code> - report storage quota for the available drives</li>
