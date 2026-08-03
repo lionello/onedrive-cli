@@ -758,7 +758,7 @@ function openBrowser(url) {
             .spawn(opener, [url], { stdio: 'ignore', detached: true })
             .on('error', () => {})
             .unref()
-    } catch (e) {
+    } catch {
         /* best effort */
     }
 }
@@ -824,7 +824,7 @@ async function login(args) {
     let lb = null
     try {
         lb = await loopbackLogin(readonly)
-    } catch (e) {
+    } catch {
         // Couldn't bind a local port; fall back to the manual paste prompt.
     }
     if (!lb) {
@@ -1570,7 +1570,7 @@ async function mcp() {
             let lb = null
             try {
                 lb = await loopbackLogin(readonly)
-            } catch (e) {
+            } catch {
                 // Couldn't bind a local port; fall through to the paste path.
             }
             const url = lb ? lb.url : buildLoginUrl(readonly)
@@ -1606,7 +1606,7 @@ async function mcp() {
                     await saveToken(captured)
                     lb.cancel()
                     return asJson({ ok: true, message: 'Access token saved.' })
-                } catch (err) {
+                } catch {
                     // Presented, but the token didn't arrive in time.
                     lb.cancel()
                     return asJson({
