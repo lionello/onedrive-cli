@@ -907,17 +907,12 @@ async function chmod1(mode, remote) {
     let ok // FIXME track result from all shares
     for (const cur of result.value) {
         if (mode === MINUS_RW) {
-            ok = await call(
-                '/drive/root' + remote + ':/permissions/' + cur.id,
-                'DELETE'
-            )
+            ok = await call(remote + '/permissions/' + cur.id, 'DELETE')
         } else if (cur.roles[0] === 'write') {
             // FIXME: generic 'edit' links cannot be patched to be read only
-            ok = await call(
-                '/drive/root' + remote + ':/permissions/' + cur.id,
-                'PATCH',
-                { roles: ['read'] }
-            )
+            ok = await call(remote + '/permissions/' + cur.id, 'PATCH', {
+                roles: ['read'],
+            })
         }
     }
     return ok ? 'OK' : 'Nothing was changed'
