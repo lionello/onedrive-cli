@@ -904,15 +904,21 @@ async function chmod1(mode, remote) {
     // -w  read     NOP
     // -rw write    DELETE
     // -rw read     DELETE
-    let ok // FIXME track result from all shares
+    let ok = false // FIXME track result from all shares
     for (const cur of result.value) {
         if (mode === MINUS_RW) {
-            ok = await call(remote + '/permissions/' + cur.id, 'DELETE')
+            // Revoking a permission answers 204 No Content, so use del()
+            // rather than call() -- the latter parses a JSON body that isn't
+            // there, which threw after revoking the first share and left the
+            // rest in place.
+            await del(remote + '/permissions/' + cur.id)
+            ok = true
         } else if (cur.roles[0] === 'write') {
             // FIXME: generic 'edit' links cannot be patched to be read only
-            ok = await call(remote + '/permissions/' + cur.id, 'PATCH', {
+            await call(remote + '/permissions/' + cur.id, 'PATCH', {
                 roles: ['read'],
             })
+            ok = true
         }
     }
     return ok ? 'OK' : 'Nothing was changed'
@@ -954,7 +960,9 @@ async function chmod(args) {
         }
 
         for (const cur of args.slice(1)) {
-            await chmod1(mode, cur)
+            // chmod1 reports whether it found anything to change; say so
+            // instead of exiting silently either way.
+            console.log(`${cur}: ${await chmod1(mode, cur)}`)
         }
     }
 }
