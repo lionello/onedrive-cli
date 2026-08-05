@@ -665,9 +665,22 @@ async function cat(args) {
 function commandName() {
     const argv1 = process.argv[1] || 'onedrive-cli'
     const rel = Path.relative(process.cwd(), argv1)
-    return rel && !rel.startsWith('..') && !Path.isAbsolute(rel)
-        ? rel
-        : Path.basename(argv1)
+    const parts = rel.split(Path.sep)
+    // Running from a directory *above* us yields a long relative path that
+    // reads like a mangled absolute one -- from '/' this file becomes
+    // 'Users/me/dev/onedrive-cli/bin/onedrive', which is neither obviously
+    // runnable nor something to hand to the landing page. Keep at most one
+    // leading folder, and fall back to the basename beyond that.
+    if (
+        !rel ||
+        parts.length > 2 ||
+        rel.startsWith('..') ||
+        Path.isAbsolute(rel)
+    ) {
+        return Path.basename(argv1)
+    }
+    // A bare name is only runnable as './name'; with a folder it already is.
+    return parts.length === 1 ? '.' + Path.sep + rel : rel
 }
 
 function buildLoginUrl(readonly, state) {
