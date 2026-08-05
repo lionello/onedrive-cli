@@ -234,6 +234,102 @@ function sanitize(remote) {
     )
 }
 
+// The path components of a remote path, without the ':/' prefix.
+function splitPath(remote) {
+    return remote
+        .replace(/^:?\/?\.?/, '')
+        .split('/')
+        .filter(Boolean)
+}
+
+// The ':/'-prefixed form the CLI accepts as input, used as the prefix when
+// building the paths of a folder's children. The drive root is just ':'.
+function displayPath(remote) {
+    const parts = splitPath(remote)
+    return parts.length ? ':/' + parts.join('/') : ':'
+}
+
+// An item shared with you appears on your drive as a stub carrying a
+// `remoteItem` facet: the stub is a real item (so `stat` works) but the
+// contents live on the owner's drive, which is why listing the stub's own
+// children always comes back empty. The facets that matter -- folder, size,
+// shared, ... -- hang off remoteItem rather than off the stub.
+// See https://github.com/lionello/onedrive-cli/issues/7
+function facets(info) {
+    return info.remoteItem || info
+}
+
+// Address an item by drive + item id, the only way to reach something on
+// another drive. For a shared stub this addresses the target item on the
+// owner's drive, not the stub itself.
+function itemAddress(info) {
+    const target = facets(info)
+    const driveId = target.parentReference && target.parentReference.driveId
+    return driveId
+        ? '/drives/' + driveId + '/items/' + target.id
+        : '/drive/items/' + target.id
+}
+
+// Everything below a shared folder lives on the owner's drive, so its path on
+// our drive doesn't resolve. Walk down from the top: the first ancestor with a
+// remoteItem is the shared stub, and the remainder of the path can be
+// addressed relative to the item it points at. Returns undefined when no stub
+// is involved, i.e. the path is genuinely missing.
+async function resolveShared(remote) {
+    const parts = splitPath(remote)
+    for (let i = 1; i < parts.length; ++i) {
+        let info
+        try {
+            info = await call(sanitize(parts.slice(0, i).join('/')))
+        } catch (err) {
+            if (err.statusCode === 404) {
+                return undefined
+            }
+            throw err
+        }
+        if (info.remoteItem) {
+            return (
+                itemAddress(info) +
+                ':/' +
+                parts.slice(i).map(encodeURIComponent).join('/') +
+                ':'
+            )
+        }
+    }
+    return undefined
+}
+
+// Run a request against a remote path, retrying on the owner's drive when the
+// path turns out to live inside a shared folder. Ordinary paths pay nothing
+// extra: the retry only kicks in after a 404.
+async function withShared(remote, fn) {
+    try {
+        return await fn(sanitize(remote))
+    } catch (err) {
+        if (err.statusCode !== 404) {
+            throw err
+        }
+        const shared = await resolveShared(remote)
+        if (!shared) {
+            throw err
+        }
+        return fn(shared)
+    }
+}
+
+// The address to enumerate a folder's children from. Unlike withShared this
+// always costs a GET of the folder itself, and that is precisely what makes
+// shared folders work: the stub is a valid item, its /children is just empty.
+async function resolveFolder(remote) {
+    if (splitPath(remote).length === 0) {
+        return sanitize(remote) // the drive root is never a shared stub
+    }
+    return withShared(remote, async address => {
+        const info = await call(address)
+        return info.remoteItem ? itemAddress(info) : address
+    })
+}
+
 function absolute(info) {
     const parent = info.parentReference.path.replace(/^\/drive\/root/, '')
     return decodeURIComponent(parent) + '/' + info.name
@@ -274,24 +370,28 @@ async function ls_paged(total, cont) {
     const now = Moment()
     const threshold = 1000 * 60 * 60 * 24 * 180 //180days
     for (const f of result.value) {
-        const m = Moment(f.lastModifiedDateTime)
-        const d = 'folder' in f
+        // Read the metadata through the remoteItem facet, so a folder shared
+        // with us is listed as a folder (with its owner and child count)
+        // instead of as an empty file.
+        const info = facets(f)
+        const m = Moment(info.lastModifiedDateTime || f.lastModifiedDateTime)
+        const d = is_folder(f)
         let mod = d ? 'drwx' : '-rw-'
-        if ('shared' in f) {
+        if ('shared' in info) {
             if (
-                'effectiveRoles' in f.shared &&
-                f.shared.effectiveRoles.length === 1 &&
-                f.shared.effectiveRoles[0] === 'read'
+                'effectiveRoles' in info.shared &&
+                info.shared.effectiveRoles.length === 1 &&
+                info.shared.effectiveRoles[0] === 'read'
             ) {
                 mod += d ? 'r-x' : 'r--'
-                if (f.shared.scope === 'anonymous') {
+                if (info.shared.scope === 'anonymous') {
                     mod += d ? 'r-x' : 'r--'
                 } else {
                     mod += '---'
                 }
             } else {
                 mod += d ? 'rwx' : 'rw-'
-                if (f.shared.scope === 'anonymous') {
+                if (info.shared.scope === 'anonymous') {
                     mod += d ? 'rwx' : 'rw-'
                 } else {
                     mod += '---'
@@ -300,13 +400,14 @@ async function ls_paged(total, cont) {
         } else {
             mod += '------'
         }
-        const count = d ? f.folder.childCount : 1
+        const count = d && info.folder ? info.folder.childCount : 1
         total += count
+        const by = info.createdBy || f.createdBy
         console.log(
             mod,
             padLeft(count, 3),
-            f.createdBy.user.displayName,
-            padLeft(f.size, 10),
+            (by && by.user && by.user.displayName) || '',
+            padLeft(info.size || 0, 10),
             m.format(
                 Math.abs(now - m) < threshold ? 'MMM DD HH:mm' : 'MMM DD  YYYY'
             ),
@@ -324,7 +425,8 @@ async function ls(folders) {
     //console.log(Colors.bold('Permission Cnt Owner            Size     Date         Name'))
     let result = 0
     for (const folder of folders) {
-        result = await ls_paged(result, sanitize(folder) + '/children')
+        const address = await resolveFolder(folder)
+        result = await ls_paged(result, address + '/children')
     }
     return 'total ' + result
 }
@@ -343,26 +445,25 @@ async function upload(op, from, target) {
     if (target.endsWith('/')) {
         target = target + Path.basename(from)
     }
-    target = sanitize(target)
+    const label = sanitize(target)
     const mime = Mime.lookup(from)
     const data = await FS.readFile(from)
     // TODO: skip upload if SHA1 is the same
-    const result = await call(
-        target + '/content?@name.conflictBehavior=fail',
-        'PUT',
-        data,
-        { 'Content-Type': mime }
+    const result = await withShared(target, address =>
+        call(address + '/content?@name.conflictBehavior=fail', 'PUT', data, {
+            'Content-Type': mime,
+        })
     )
     const sha1 = sha1hash(data).toUpperCase()
     if (sha1 !== result.file.hashes.sha1Hash) {
-        throw Error('sha1Hash mismatch: ' + target)
+        throw Error('sha1Hash mismatch: ' + label)
     }
     try {
         if (op === MOVE) {
-            console.log(from, '=>', target, result.id)
+            console.log(from, '=>', label, result.id)
             await FS.unlink(from)
         } else {
-            console.log(from, '->', target, result.id)
+            console.log(from, '->', label, result.id)
         }
     } catch (err) {
         if (err.statusCode === 404) {
@@ -399,9 +500,8 @@ async function wget(args) {
         if (data.name === '' || target.endsWith('/')) {
             throw Error('Invalid target name')
         }
-        let path = Path.dirname(target + 'hack')
+        const path = await resolveFolder(Path.dirname(target + 'hack'))
         target = sanitize(target)
-        path = sanitize(path)
         await call(path + '/children', 'POST', data, {
             Prefer: 'respond-async',
         })
@@ -422,9 +522,10 @@ async function download(op, from, target) {
     if (target.endsWith('/')) {
         target = target + Path.basename(from)
     }
-    const remote = sanitize(from)
     // TODO: avoid download if the SHA1 is the same
-    const data = await getContent(remote + '/content')
+    const data = await withShared(from, address =>
+        getContent(address + '/content')
+    )
     await FS.writeFile(target, data)
     if (op === MOVE) {
         console.log(from, '=>', target)
@@ -446,14 +547,13 @@ Content-type: application/json
 }
 */
 function moveItem(item, path, name) {
-    const remote = sanitize(item)
     const data = {
         name: name,
         parentReference: {
             path: sanitize(path), // FIXME: double escapes
         },
     }
-    return call(remote, 'PATCH', data)
+    return withShared(item, address => call(address, 'PATCH', data))
 }
 
 async function rename(from, target) {
@@ -509,26 +609,36 @@ async function cp_mv(op, args, target) {
     }
 }
 
-async function cp_paged(cont, target) {
+// `prefix` is the remote path of the folder being listed: children of a folder
+// on someone else's drive have a parentReference we cannot address by path, so
+// track the path as we descend instead of deriving it from the item.
+async function cp_paged(cont, target, prefix) {
     if (cont === undefined) {
         return
     }
     const result = await call(cont)
     // TODO: copy by Item ID instead of path?
-    const files = result.value.filter(info => !is_folder(info)).map(absolute)
+    const files = result.value
+        .filter(info => !is_folder(info))
+        .map(info => prefix + '/' + info.name)
     await cp_mv(COPY, files, target + '/')
-    await cp_paged(result['@odata.nextLink'], target)
+    await cp_paged(result['@odata.nextLink'], target, prefix)
     // Recurse into subfolders
     const folders = result.value.filter(is_folder)
     for (const info of folders) {
         const folder = Path.join(target, info.name)
         await FS.mkdir(folder)
-        await cp_paged(sanitize(absolute(info)) + '/children', folder)
+        await cp_paged(
+            itemAddress(info) + '/children',
+            folder,
+            prefix + '/' + info.name
+        )
     }
 }
 
 function is_folder(info) {
-    return info.folder || (info.package && info.package.type === 'oneNote')
+    const f = facets(info)
+    return !!(f.folder || (f.package && f.package.type === 'oneNote'))
 }
 
 async function cp(args) {
@@ -549,7 +659,8 @@ async function cp(args) {
 
         // Recursive copy
         for (const folder of args.slice(1)) {
-            await cp_paged(sanitize(folder) + '/children', target)
+            const address = await resolveFolder(folder)
+            await cp_paged(address + '/children', target, displayPath(folder))
         }
     }
 }
@@ -577,7 +688,7 @@ Returns 204 No Content on success.
 Supports files and folders (recursive delete).
 */
 function rmItem(remote) {
-    return del(sanitize(remote))
+    return withShared(remote, address => del(address))
 }
 
 async function rm(args) {
@@ -616,13 +727,13 @@ Content-Type: application/json
   "file": { }
 }
 */
-function createFolder(parent, name) {
-    const remote = sanitize(parent)
+async function createFolder(parent, name) {
+    const address = await resolveFolder(parent)
     const data = {
         name: name,
         folder: {},
     }
-    return call(remote + '/children', 'POST', data)
+    return call(address + '/children', 'POST', data)
 }
 
 async function mkdir1(dir) {
@@ -643,8 +754,9 @@ async function mkdir(args) {
 }
 
 async function cat1(remote) {
-    remote = sanitize(remote)
-    const data = await getContent(remote + '/content')
+    const data = await withShared(remote, address =>
+        getContent(address + '/content')
+    )
     print(data)
 }
 
@@ -771,7 +883,7 @@ function openBrowser(url) {
             .spawn(opener, [url], { stdio: 'ignore', detached: true })
             .on('error', () => {})
             .unref()
-    } catch (e) {
+    } catch {
         /* best effort */
     }
 }
@@ -837,7 +949,7 @@ async function login(args) {
     let lb = null
     try {
         lb = await loopbackLogin(readonly)
-    } catch (e) {
+    } catch {
         // Couldn't bind a local port; fall back to the manual paste prompt.
     }
     if (!lb) {
@@ -997,8 +1109,7 @@ async function sendmail(args) {
 }
 
 function getItem(file) {
-    const remote = sanitize(file)
-    return call(remote)
+    return withShared(file, address => call(address))
 }
 
 async function stat1(file) {
@@ -1015,15 +1126,17 @@ async function stat(args) {
     }
 }
 
-async function find_paged(cont, expression) {
+// See cp_paged for why the path is tracked in `prefix` instead of read back
+// off each item.
+async function find_paged(cont, expression, prefix) {
     if (cont === undefined) {
         return
     }
     const result = await call(cont)
     result.value
-        .filter(info => expression.dirOnly !== !info.folder)
+        .filter(info => expression.dirOnly !== !is_folder(info))
         .filter(info => !expression.regex || expression.regex.test(info.name))
-        .map(absolute)
+        .map(info => prefix + '/' + info.name)
         .forEach(file => {
             if (expression.print0) {
                 process.stdout.write(file)
@@ -1032,11 +1145,15 @@ async function find_paged(cont, expression) {
                 console.log(file)
             }
         })
-    await find_paged(result['@odata.nextLink'], expression)
+    await find_paged(result['@odata.nextLink'], expression, prefix)
     // Recurse into subfolders
-    const folders = result.value.filter(info => info.folder)
+    const folders = result.value.filter(is_folder)
     for (const info of folders) {
-        await find_paged(sanitize(absolute(info)) + '/children', expression)
+        await find_paged(
+            itemAddress(info) + '/children',
+            expression,
+            prefix + '/' + info.name
+        )
     }
 }
 
@@ -1084,7 +1201,12 @@ async function find(args) {
             }
         }
         for (const folder of args) {
-            await find_paged(sanitize(folder) + '/children', expression)
+            const address = await resolveFolder(folder)
+            await find_paged(
+                address + '/children',
+                expression,
+                displayPath(folder)
+            )
         }
     }
 }
@@ -1264,17 +1386,20 @@ async function album(args) {
 // Structured equivalents of ls/grep/find that return data instead of printing.
 async function listFolder(path) {
     const items = []
-    let cont = sanitize(path) + '/children'
+    const prefix = displayPath(path)
+    let cont = (await resolveFolder(path)) + '/children'
     while (cont) {
         const result = await call(cont)
         for (const f of result.value) {
+            const info = facets(f)
             items.push({
                 name: f.name,
-                path: absolute(f),
+                path: prefix + '/' + f.name,
                 type: is_folder(f) ? 'folder' : 'file',
-                size: f.size,
-                lastModified: f.lastModifiedDateTime,
-                ...(f.folder ? { childCount: f.folder.childCount } : {}),
+                size: info.size,
+                lastModified:
+                    info.lastModifiedDateTime || f.lastModifiedDateTime,
+                ...(info.folder ? { childCount: info.folder.childCount } : {}),
             })
         }
         cont = result['@odata.nextLink']
@@ -1296,22 +1421,36 @@ async function searchContent(query) {
 }
 
 async function findItems(path, expression, acc = []) {
-    let cont = sanitize(path) + '/children'
+    return findItemsAt(
+        await resolveFolder(path),
+        displayPath(path),
+        expression,
+        acc
+    )
+}
+
+async function findItemsAt(address, prefix, expression, acc) {
+    let cont = address + '/children'
     while (cont) {
         const result = await call(cont)
         for (const info of result.value) {
             const matchesType =
                 expression.dirOnly === undefined ||
-                expression.dirOnly === !!info.folder
+                expression.dirOnly === is_folder(info)
             const matchesName =
                 !expression.regex || expression.regex.test(info.name)
             if (matchesType && matchesName) {
-                acc.push(absolute(info))
+                acc.push(prefix + '/' + info.name)
             }
         }
         // Recurse into subfolders found on this page.
-        for (const info of result.value.filter(i => i.folder)) {
-            await findItems(absolute(info), expression, acc)
+        for (const info of result.value.filter(is_folder)) {
+            await findItemsAt(
+                itemAddress(info),
+                prefix + '/' + info.name,
+                expression,
+                acc
+            )
         }
         cont = result['@odata.nextLink']
     }
@@ -1459,10 +1598,8 @@ async function mcp() {
             },
         },
         async ({ path, offset, length }) => {
-            const { buffer, total } = await getRange(
-                sanitize(path) + '/content',
-                offset,
-                length
+            const { buffer, total } = await withShared(path, address =>
+                getRange(address + '/content', offset, length)
             )
             return asJson({
                 path,
@@ -1578,7 +1715,7 @@ async function mcp() {
             let lb = null
             try {
                 lb = await loopbackLogin(readonly)
-            } catch (e) {
+            } catch {
                 // Couldn't bind a local port; fall through to the paste path.
             }
             const url = lb ? lb.url : buildLoginUrl(readonly)
@@ -1614,7 +1751,7 @@ async function mcp() {
                     await saveToken(captured)
                     lb.cancel()
                     return asJson({ ok: true, message: 'Access token saved.' })
-                } catch (err) {
+                } catch {
                     // Presented, but the token didn't arrive in time.
                     lb.cancel()
                     return asJson({
