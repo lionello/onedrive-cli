@@ -61,8 +61,13 @@ async function checkResponse(response) {
 }
 
 function sha1hash(data) {
+    // SHA-1 retained solely for OneDrive API compatibility (file.hashes.sha1Hash)
     const sha1 = Crypto.createHash('sha1').update(data).digest('hex')
     return sha1
+}
+
+function sha256hash(data) {
+    return Crypto.createHash('sha256').update(data).digest('hex')
 }
 
 function padLeft(str, len) {
