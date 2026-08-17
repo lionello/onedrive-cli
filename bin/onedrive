@@ -689,6 +689,12 @@ function buildLoginUrl(readonly, state) {
     // in here so the callback page knows which local port to forward the token
     // to; a plain login just uses an unguessable nonce.
     state = state || Crypto.randomBytes(16).toString('hex')
+    // A hosted page, deliberately -- not the http://127.0.0.1:<port> redirect
+    // the OAuth loopback flow would normally use. A dev container without a
+    // port mapping is unreachable from the host browser, so that redirect would
+    // dead-end where this page still loads and degrades to the copy command.
+    // Loopback forwarding stays a best-effort optimization layered on top.
+    //
     // Pass our command name to the landing page via a redirect_uri query
     // param so it can show a runnable command.
     const redirect =
