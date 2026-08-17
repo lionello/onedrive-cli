@@ -102,6 +102,21 @@ they live outside the folder hierarchy and only reference the files, so
 Deleting an album itself is not supported by the API — use the OneDrive
 web UI for that.
 
+##### Browse a folder shared with you
+
+```sh
+onedrive ls :/Team                    # the shared folder as it appears on your drive
+onedrive cat :/Team/notes.txt
+onedrive cp -R :/Team ./local-copy
+```
+
+A folder shared with you appears on your drive as a stub pointing at the item
+on the owner's drive, so its contents are addressed on _that_ drive. The CLI
+follows the stub for you: use the shared folder's path as it appears in your
+own OneDrive and `ls`, `find`, `cat`, `cp` and friends work as usual. Use the
+"Add to my OneDrive" button in the web view for anything shared with you that
+does not show up in `ls` yet.
+
 ## MCP server
 
 `onedrive mcp` starts a read-only [Model Context Protocol](https://modelcontextprotocol.io)
