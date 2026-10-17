@@ -406,7 +406,7 @@ function verifyUpload(data, item, target) {
 PUT /me/drive/root:/{parent-path}/{filename}:/content
 @microsoft.graph.conflictBehavior   fail, replace (def), or rename.
 */
-async function upload(op, from, target) {
+async function upload(op, from, target, options = {}) {
     if (from.endsWith('/')) {
         throw Error('Invalid source name')
     }
@@ -414,15 +414,41 @@ async function upload(op, from, target) {
         target = target + Path.basename(from)
     }
     target = sanitize(target)
+    let replace = options.overwrite === REPLACE
+    if (options.overwrite === ASK) {
+        const exists = await call(target).then(
+            () => true,
+            err => {
+                if (err.statusCode === 404) {
+                    return false
+                }
+                throw err
+            }
+        )
+        if (exists && !(await confirm('overwrite ' + target + '?'))) {
+            return console.log(from, '--', target, '(not overwritten)')
+        }
+        replace = exists
+    }
     const mime = Mime.lookup(from)
     const data = await FS.readFile(from)
     // TODO(#36): skip the PUT when the target's hash already matches
-    const result = await call(
-        target + '/content?@microsoft.graph.conflictBehavior=fail',
-        'PUT',
-        data,
-        { 'Content-Type': mime }
-    )
+    let result
+    try {
+        result = await call(
+            target +
+                '/content?@microsoft.graph.conflictBehavior=' +
+                (replace ? 'replace' : 'fail'),
+            'PUT',
+            data,
+            { 'Content-Type': mime }
+        )
+    } catch (err) {
+        if (options.overwrite === SKIP && err.code === 'nameAlreadyExists') {
+            return console.log(from, '--', target, '(exists, skipped)')
+        }
+        throw err
+    }
     verifyUpload(data, result, target)
     try {
         if (op === MOVE) {
@@ -482,7 +508,7 @@ async function wget(args) {
 /*
 GET /me/drive/root:/{path and filename}:/content
 */
-async function download(op, from, target) {
+async function download(op, from, target, options = {}) {
     if (from.endsWith('/')) {
         throw Error('Invalid source name')
     }
@@ -493,6 +519,19 @@ async function download(op, from, target) {
         target = target + Path.basename(from)
     }
     const remote = sanitize(from)
+    if (options.overwrite === SKIP || options.overwrite === ASK) {
+        const exists = await FS.stat(target).then(
+            () => true,
+            () => false
+        )
+        if (
+            exists &&
+            (options.overwrite === SKIP ||
+                !(await confirm('overwrite ' + target + '?')))
+        ) {
+            return console.log(from, '--', target, '(exists, skipped)')
+        }
+    }
     // TODO(#36): skip the GET when the local file's SHA1 already matches
     const data = await getContent(remote + '/content')
     await FS.writeFile(target, data)
@@ -539,7 +578,7 @@ async function rename(from, target) {
     console.log(`renamed '${from}' -> '${target}'`)
 }
 
-async function cp_mv(op, args, target) {
+async function cp_mv(op, args, target, options = {}) {
     if (args.length === 0) {
         return
     }
@@ -563,7 +602,7 @@ async function cp_mv(op, args, target) {
     } else if (args[0].startsWith('./') || target.startsWith(':/')) {
         // from local to onedrive
         for (const cur of args) {
-            await upload(op, cur, target)
+            await upload(op, cur, target, options)
         }
     } else if (
         args[0].startsWith(':/') ||
@@ -572,28 +611,28 @@ async function cp_mv(op, args, target) {
     ) {
         // from onedrive to local
         for (const cur of args) {
-            await download(op, cur, target)
+            await download(op, cur, target, options)
         }
     } else {
         throw Error('Use ./ or :/ path prefix for local or remote paths.')
     }
 }
 
-async function cp_paged(cont, target) {
+async function cp_paged(cont, target, options) {
     if (cont === undefined) {
         return
     }
     const result = await call(cont)
     // TODO(#71): copy by Item ID instead of path?
     const files = result.value.filter(info => !is_folder(info)).map(absolute)
-    await cp_mv(COPY, files, target + '/')
-    await cp_paged(result['@odata.nextLink'], target)
+    await cp_mv(COPY, files, target + '/', options)
+    await cp_paged(result['@odata.nextLink'], target, options)
     // Recurse into subfolders
     const folders = result.value.filter(is_folder)
     for (const info of folders) {
         const folder = Path.join(target, info.name)
-        await FS.mkdir(folder)
-        await cp_paged(sanitize(absolute(info)) + '/children', folder)
+        await FS.mkdir(folder, { recursive: true })
+        await cp_paged(sanitize(absolute(info)) + '/children', folder, options)
     }
 }
 
@@ -601,26 +640,61 @@ function is_folder(info) {
     return info.folder || (info.package && info.package.type === 'oneNote')
 }
 
+// What to do when the target exists: the last of -f, -i or -n wins, as in
+// cp(1). Without any, uploads refuse to overwrite and downloads overwrite.
+const REPLACE = 'replace' // -f
+const ASK = 'ask' // -i
+const SKIP = 'skip' // -n
+
+// Leading options of cp and mv: -R (cp only), -t directory, -f, -i, -n, also
+// combined (-Rf).
+function parseCopyOptions(args, allowed) {
+    const options = {}
+    while (args.length > 0 && /^-[A-Za-z]+$/.test(args[0])) {
+        for (const flag of args.shift().slice(1)) {
+            if (!allowed.includes(flag)) {
+                throw Error('Unknown option: -' + flag)
+            }
+            if (flag === 'R' || flag === 'r') {
+                options.recursive = true
+            } else if (flag === 't') {
+                options.directory = args.shift()
+            } else {
+                options.overwrite = { f: REPLACE, i: ASK, n: SKIP }[flag]
+            }
+        }
+    }
+    return options
+}
+
+// Ask on the terminal (or read the answer from stdin); yes starts with y.
+function confirm(question) {
+    const readline = require('readline').createInterface({
+        input: process.stdin,
+        output: process.stderr,
+    })
+    return new Promise(resolve =>
+        readline.question(question + ' (y/n [n]) ', answer => {
+            readline.close()
+            resolve(/^y/i.test(answer.trim()))
+        })
+    )
+}
+
 async function cp(args) {
-    if (args.length < 2) {
-        console.error('usage: cp [-R] source target')
-        console.error('       cp [-R] source ... directory')
-        console.error('       cp -t directory source ...')
-    } else {
-        if (args[0] === '-t') {
-            const directory = args[1]
-            return cp_mv(COPY, args.slice(2), directory)
-        }
-
-        const target = args.pop()
-        if (args[0] !== '-R') {
-            return cp_mv(COPY, args, target)
-        }
-
-        // Recursive copy
-        for (const folder of args.slice(1)) {
-            await cp_paged(sanitize(folder) + '/children', target)
-        }
+    const options = parseCopyOptions(args, 'Rrtfin')
+    if (args.length < (options.directory ? 1 : 2)) {
+        console.error('usage: cp [-R] [-f | -i | -n] source target')
+        console.error('       cp [-R] [-f | -i | -n] source ... directory')
+        console.error('       cp [-f | -i | -n] -t directory source ...')
+        return
+    }
+    const target = options.directory || args.pop()
+    if (!options.recursive) {
+        return cp_mv(COPY, args, target, options)
+    }
+    for (const folder of args) {
+        await cp_paged(sanitize(folder) + '/children', target, options)
     }
 }
 
@@ -655,19 +729,15 @@ async function rm(args) {
 }
 
 function mv(args) {
-    if (args.length < 2) {
-        console.error('usage: mv source target')
-        console.error('       mv source ... directory')
-        console.error('       mv -t directory source ...')
-    } else {
-        if (args[0] === '-t') {
-            const directory = args[1]
-            return cp_mv(MOVE, args.slice(2), directory)
-        }
-
-        const target = args.pop()
-        return cp_mv(MOVE, args, target)
+    const options = parseCopyOptions(args, 'tfin')
+    if (args.length < (options.directory ? 1 : 2)) {
+        console.error('usage: mv [-f | -i | -n] source target')
+        console.error('       mv [-f | -i | -n] source ... directory')
+        console.error('       mv [-f | -i | -n] -t directory source ...')
+        return
     }
+    const target = options.directory || args.pop()
+    return cp_mv(MOVE, args, target, options)
 }
 
 /*

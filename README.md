@@ -106,7 +106,7 @@ Run `onedrive help` (or `-h`/`--help`) for this list at any time, and
 -   `album` - list, create, or edit photo albums (`ls`/`create`/`add`/`rm`)
 -   `cat` - dumps the contents of a file to stdout
 -   `chmod` - change sharing permissions
--   `cp` - copies local file(s) to OneDrive or vice-versa
+-   `cp` - copies local file(s) to OneDrive or vice-versa (`-R` recursive; `-f` overwrite, `-n` never overwrite, `-i` ask)
 -   `df` - shows OneDrive storage usage stats
 -   `find` - find file(s) or folder(s) by name, optionally separated by `NUL`
 -   `grep` - full-text search across the drive, listing matching paths
@@ -117,7 +117,7 @@ Run `onedrive help` (or `-h`/`--help`) for this list at any time, and
 -   `ls` - list the contents of a folder
 -   `mcp` - run a read-only [MCP](https://modelcontextprotocol.io) server over stdio
 -   `mkdir` - create a remote folder
--   `mv` - move a local file to OneDrive or vice-versa
+-   `mv` - move a local file to OneDrive or vice-versa (`-f`, `-n`, `-i` as for `cp`)
 -   `rm` - delete a file or folder from OneDrive
 -   `sendmail` - send an invitation email for editing to recipients
 -   `stat` - dump all information for particular file(s)
