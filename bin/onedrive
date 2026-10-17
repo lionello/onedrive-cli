@@ -721,6 +721,119 @@ async function cat(args) {
     }
 }
 
+// head and tail read a file in chunks through HTTP Range requests, so only
+// the part that is printed (plus at most one chunk) comes down.
+const RANGE_CHUNK = 64 * 1024
+const NEWLINE = 0x0a
+
+// -c BYTES, -n LINES (also -cBYTES / -nLINES); the default is -n 10.
+function parseHeadTailArgs(args) {
+    const options = { lines: 10 }
+    const files = []
+    for (let index = 0; index < args.length; index++) {
+        const m = /^-([cn])(\d*)$/.exec(args[index])
+        if (!m) {
+            files.push(args[index])
+            continue
+        }
+        const value = m[2] !== '' ? m[2] : args[++index]
+        if (!/^\d+$/.test(value || '')) {
+            throw Error('invalid number: ' + value)
+        }
+        if (m[1] === 'c') {
+            options.bytes = Number(value)
+            delete options.lines
+        } else {
+            options.lines = Number(value)
+            delete options.bytes
+        }
+    }
+    return { options, files }
+}
+
+async function head1(remote, options) {
+    const url = sanitize(remote) + '/content'
+    if (options.bytes !== undefined) {
+        if (options.bytes > 0) {
+            print((await getRange(url, 0, options.bytes)).buffer)
+        }
+        return
+    }
+    const chunks = []
+    let newlines = 0
+    for (let offset = 0; options.lines > 0; ) {
+        const { buffer, total } = await getRange(url, offset, RANGE_CHUNK)
+        const end = buffer.findIndex(
+            byte => byte === NEWLINE && ++newlines === options.lines
+        )
+        if (end >= 0) {
+            chunks.push(buffer.subarray(0, end + 1))
+            break
+        }
+        chunks.push(buffer)
+        offset += buffer.length
+        if (buffer.length < RANGE_CHUNK || (total && offset >= total)) {
+            break
+        }
+    }
+    print(Buffer.concat(chunks))
+}
+
+async function tail1(remote, options) {
+    const item = await call(sanitize(remote))
+    if (item.folder) {
+        throw Error(remote + ': Is a directory')
+    }
+    const url = sanitize(remote) + '/content'
+    const size = item.size
+    if (options.bytes !== undefined) {
+        const length = Math.min(options.bytes, size)
+        if (length > 0) {
+            print((await getRange(url, size - length, length)).buffer)
+        }
+        return
+    }
+    if (options.lines === 0 || size === 0) {
+        return
+    }
+    // Walk back from the end. A newline in the very last byte ends the last
+    // line rather than starting a new one, so it isn't counted.
+    const chunks = []
+    let start
+    let newlines = 0
+    for (let end = size; end > 0 && start === undefined; ) {
+        const from = Math.max(0, end - RANGE_CHUNK)
+        const { buffer } = await getRange(url, from, end - from)
+        for (let i = buffer.length - 1; i >= 0; i--) {
+            if (
+                buffer[i] === NEWLINE &&
+                from + i !== size - 1 &&
+                ++newlines === options.lines
+            ) {
+                start = i + 1
+                break
+            }
+        }
+        chunks.unshift(start === undefined ? buffer : buffer.subarray(start))
+        end = from
+    }
+    print(Buffer.concat(chunks))
+}
+
+async function headTail(name, read, args) {
+    const { options, files } = parseHeadTailArgs(args)
+    if (files.length < 1) {
+        console.error('usage: ' + name + ' [-c bytes | -n lines] file ...')
+        return
+    }
+    for (const [index, file] of files.entries()) {
+        if (files.length > 1) {
+            console.log((index > 0 ? '\n' : '') + '==> ' + file + ' <==')
+        }
+        await read(file, options)
+    }
+}
+
 // How the user invoked us, so the landing page can echo a runnable command.
 // Whatever this returns is pasted into a shell verbatim, so every branch has
 // to be runnable on its own: a short path relative to the cwd when we live
@@ -1706,7 +1819,7 @@ async function main(argv) {
             console.log(
                 '\nusage: ' +
                     commandName() +
-                    ' COMMAND [arguments]\n\ncommands: album albums cat chmod cp df find grep help ln login logout ls mcp mkdir mv rm sendmail stat wget'
+                    ' COMMAND [arguments]\n\ncommands: album albums cat chmod cp df find grep head help ln login logout ls mcp mkdir mv rm sendmail stat tail wget'
             )
             return
 
@@ -1739,6 +1852,9 @@ async function main(argv) {
         case 'grep':
             return grep(argv.slice(3))
 
+        case 'head':
+            return headTail('head', head1, argv.slice(3))
+
         case 'ln':
             return ln(argv.slice(3))
 
@@ -1768,6 +1884,9 @@ async function main(argv) {
 
         case 'stat':
             return stat(argv.slice(3))
+
+        case 'tail':
+            return headTail('tail', tail1, argv.slice(3))
 
         case 'wget':
             return wget(argv.slice(3))

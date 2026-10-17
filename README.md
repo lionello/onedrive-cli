@@ -110,6 +110,7 @@ Run `onedrive help` (or `-h`/`--help`) for this list at any time, and
 -   `df` - shows OneDrive storage usage stats
 -   `find` - find file(s) or folder(s) by name, optionally separated by `NUL`
 -   `grep` - full-text search across the drive, listing matching paths
+-   `head` - print the first lines (`-n`) or bytes (`-c`) of a file, downloading only that part
 -   `help` - shows list of supported commands
 -   `ln` - create a link to the remote item
 -   `login` - sign in (browser, or `--device` for a code), see [Signing in](#signing-in)
@@ -121,6 +122,7 @@ Run `onedrive help` (or `-h`/`--help`) for this list at any time, and
 -   `rm` - delete a file or folder from OneDrive
 -   `sendmail` - send an invitation email for editing to recipients
 -   `stat` - dump all information for particular file(s)
+-   `tail` - print the last lines (`-n`) or bytes (`-c`) of a file, downloading only that part
 -   `wget` - copy a remote URL to OneDrive (server side)
 
 ## Examples
