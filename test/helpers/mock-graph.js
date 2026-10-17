@@ -27,6 +27,7 @@ class MockGraph {
         this.requests = [] // "METHOD /path" of every request, for assertions
         this.tokenRequests = [] // grant_type of every token request
         this.refreshGate = null // while set, refresh answers wait for it
+        this.ranges = [] // { start, length } of every ranged download
         this.corruptUploadHash = false
         this.nextId = 1
         this.items = new Map() // path ('' = root) -> item
@@ -440,6 +441,7 @@ class MockGraph {
                     .end()
             }
             const end = Math.min(Number(range[2]), data.length - 1)
+            this.ranges.push({ start, length: end - start + 1 })
             return res
                 .writeHead(206, {
                     'Content-Range':
