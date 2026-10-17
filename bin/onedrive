@@ -1027,6 +1027,81 @@ async function stat(args) {
     }
 }
 
+/*
+Every folder in a children listing already carries the recursive size of its
+contents, so du is aggregation over listings it fetches anyway: a folder's
+total is the sum of its children's sizes, and -d 1 on the root is a single
+request. Output is post-order like du(1): what is inside comes before it.
+*/
+function duSize(size, options) {
+    return options.human ? humanize(size) : Math.ceil(size / 1024)
+}
+
+// size: the folder's size if the caller already has it from a listing.
+async function du1(path, depth, options, size) {
+    if (depth === 0) {
+        if (size === undefined) {
+            size = (await call(sanitize(path))).size
+        }
+        console.log(duSize(size, options) + '\t' + path)
+        return size
+    }
+    const base = path.replace(/\/+$/, '')
+    let total = 0
+    for (let cont = sanitize(path) + '/children'; cont; ) {
+        const result = await call(cont)
+        for (const info of result.value) {
+            const child = base + '/' + info.name
+            if (info.folder) {
+                total += await du1(child, depth - 1, options, info.size)
+            } else {
+                total += info.size
+                if (options.all) {
+                    console.log(duSize(info.size, options) + '\t' + child)
+                }
+            }
+        }
+        cont = result['@odata.nextLink']
+    }
+    console.log(duSize(total, options) + '\t' + path)
+    return total
+}
+
+async function du(args) {
+    const options = {}
+    let depth = Infinity
+    const paths = []
+    for (let index = 0; index < args.length; index++) {
+        const arg = args[index]
+        if (arg === '-d' || /^-d\d+$/.test(arg)) {
+            const value = arg === '-d' ? args[++index] : arg.slice(2)
+            if (!/^\d+$/.test(value || '')) {
+                throw Error('invalid depth: ' + value)
+            }
+            depth = Number(value)
+        } else if (/^-[ahcs]+$/.test(arg)) {
+            options.all ||= arg.includes('a')
+            options.human ||= arg.includes('h')
+            options.total ||= arg.includes('c')
+            if (arg.includes('s')) {
+                depth = 0
+            }
+        } else {
+            paths.push(arg)
+        }
+    }
+    if (paths.length === 0) {
+        paths.push(':/')
+    }
+    let total = 0
+    for (const path of paths) {
+        total += await du1(path, depth, options)
+    }
+    if (options.total) {
+        console.log(duSize(total, options) + '\ttotal')
+    }
+}
+
 async function find_paged(cont, expression) {
     if (cont === undefined) {
         return
@@ -1706,7 +1781,7 @@ async function main(argv) {
             console.log(
                 '\nusage: ' +
                     commandName() +
-                    ' COMMAND [arguments]\n\ncommands: album albums cat chmod cp df find grep help ln login logout ls mcp mkdir mv rm sendmail stat wget'
+                    ' COMMAND [arguments]\n\ncommands: album albums cat chmod cp df du find grep help ln login logout ls mcp mkdir mv rm sendmail stat wget'
             )
             return
 
@@ -1732,6 +1807,9 @@ async function main(argv) {
 
         case 'df':
             return df()
+
+        case 'du':
+            return du(argv.slice(3))
 
         case 'find':
             return find(argv.slice(3))

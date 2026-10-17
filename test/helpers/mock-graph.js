@@ -83,7 +83,11 @@ class MockGraph {
             }
         }
         if (entry.folder) {
-            result.size = 0
+            // Like Graph: a folder's size is that of everything inside it.
+            const prefix = path === '' ? '' : path + '/'
+            result.size = [...this.content.entries()]
+                .filter(([p]) => p.startsWith(prefix))
+                .reduce((sum, [, data]) => sum + data.length, 0)
             result.folder = { childCount: this.children(path).length }
         } else {
             const data = this.content.get(path)
