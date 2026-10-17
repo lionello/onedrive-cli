@@ -26,6 +26,10 @@ class MockGraph {
         this.requests = [] // "METHOD /path" of every request, for assertions
         this.tokenRequests = [] // grant_type of every token request
         this.corruptUploadHash = false
+        this.sessions = new Map() // upload session id -> { path, size, data }
+        this.uploadChunks = [] // { start, length } of every accepted chunk
+        this.failChunkPuts = 0 // answer the next N chunks with 500, unstored
+        this.dropChunkResponses = 0 // store the next N chunks, then answer 500
         this.nextId = 1
         this.items = new Map() // path ('' = root) -> item
         this.content = new Map() // path -> Buffer
@@ -164,6 +168,9 @@ class MockGraph {
             }
             if (url.pathname.startsWith('/download/')) {
                 return this.download(req, res, url)
+            }
+            if (url.pathname.startsWith('/upload/')) {
+                return this.uploadSession(req, res, url, body, json)
             }
             if (url.pathname.startsWith('/v1.0/')) {
                 const auth = req.headers.authorization || ''
@@ -346,6 +353,28 @@ class MockGraph {
                 })
                 .end()
         }
+        if (action === 'createUploadSession' && req.method === 'POST') {
+            const { item } = JSON.parse(body.toString())
+            if (
+                this.items.has(path) &&
+                item['@microsoft.graph.conflictBehavior'] === 'fail'
+            ) {
+                return json(409, {
+                    error: {
+                        code: 'nameAlreadyExists',
+                        message:
+                            'An item with the same name already exists under the parent',
+                    },
+                })
+            }
+            const id = 'session' + this.nextId++
+            this.sessions.set(id, { path, data: Buffer.alloc(0) })
+            return json(200, {
+                uploadUrl: this.url + '/upload/' + id,
+                expirationDateTime: '2030-01-01T00:00:00Z',
+                nextExpectedRanges: ['0-'],
+            })
+        }
         if (action === 'content' && req.method === 'PUT') {
             if (
                 this.items.has(path) &&
@@ -368,6 +397,56 @@ class MockGraph {
             return json(201, item)
         }
         notFound()
+    }
+
+    // The pre-authenticated upload URL of a session. Like Graph, it rejects an
+    // Authorization header.
+    uploadSession(req, res, url, body, json) {
+        if (req.headers.authorization) {
+            return json(401, {
+                error: { code: 'unauthenticated', message: 'Unexpected token' },
+            })
+        }
+        const id = url.pathname.slice('/upload/'.length)
+        const session = this.sessions.get(id)
+        if (!session) {
+            return json(404, {
+                error: { code: 'itemNotFound', message: 'Session not found' },
+            })
+        }
+        const expected = () => ({
+            nextExpectedRanges: [session.data.length + '-'],
+        })
+        if (req.method === 'GET') {
+            return json(200, expected())
+        }
+        if (req.method === 'DELETE') {
+            this.sessions.delete(id)
+            return res.writeHead(204).end()
+        }
+        if (this.failChunkPuts > 0) {
+            this.failChunkPuts--
+            return json(500, { error: { code: 'generalException' } })
+        }
+        const range = /^bytes (\d+)-(\d+)\/(\d+)$/.exec(
+            req.headers['content-range'] || ''
+        )
+        const start = range && Number(range[1])
+        if (!range || start !== session.data.length) {
+            return json(416, expected())
+        }
+        session.data = Buffer.concat([session.data, body])
+        this.uploadChunks.push({ start, length: body.length })
+        if (this.dropChunkResponses > 0) {
+            this.dropChunkResponses--
+            return json(500, { error: { code: 'generalException' } })
+        }
+        if (session.data.length < Number(range[3])) {
+            return json(202, expected())
+        }
+        this.sessions.delete(id)
+        this.addFile(session.path, session.data)
+        return json(201, this.item(session.path))
     }
 
     move(id, patch, json) {

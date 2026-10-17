@@ -3,6 +3,7 @@ const Colors = require('colors/safe')
 const Crypto = require('crypto')
 const fetch = require('node-fetch')
 const FS = require('fs/promises')
+const { createReadStream } = require('fs')
 const Http = require('http')
 const Https = require('https')
 const Mime = require('mime')
@@ -14,7 +15,7 @@ const {
     startBrowserLogin,
     startDeviceLogin,
 } = require('../lib/auth')
-const { quickXorHash } = require('../lib/quickxorhash')
+const { quickXorHash, quickXorHashFile } = require('../lib/quickxorhash')
 
 // The $XDG_STATE_HOME directory contains state data that should persist between (application) restarts.
 const TOKEN_PATH = Path.join(
@@ -402,9 +403,120 @@ function verifyUpload(data, item, target) {
     }
 }
 
+// Like verifyUpload(), for a file too large to hold in memory: stream it.
+async function verifyUploadFile(from, item, target) {
+    const hashes = (item.file && item.file.hashes) || {}
+    if (hashes.quickXorHash) {
+        if ((await quickXorHashFile(from)) !== hashes.quickXorHash) {
+            throw Error('quickXorHash mismatch: ' + target)
+        }
+    } else if (hashes.sha1Hash) {
+        const sha1 = Crypto.createHash('sha1')
+        for await (const chunk of createReadStream(from)) {
+            sha1.update(chunk)
+        }
+        if (
+            sha1.digest('hex').toUpperCase() !== hashes.sha1Hash.toUpperCase()
+        ) {
+            throw Error('sha1Hash mismatch: ' + target)
+        }
+    }
+}
+
+// Files above this size go up through a resumable upload session instead of
+// a single PUT, read from disk a chunk at a time.
+const UPLOAD_SESSION_THRESHOLD = 4 * 1024 * 1024
+// Chunks must be a multiple of 320 KiB; 10 MiB is the size Microsoft suggests.
+const UPLOAD_CHUNK = 32 * 320 * 1024
+// Failed chunks in a row before giving up (each also retries 503/429).
+const UPLOAD_ATTEMPTS = 5
+
+// The first offset the session still wants, from "12345-" or "12345-67890".
+function nextExpectedOffset(session, fallback) {
+    const ranges = session.nextExpectedRanges
+    return ranges && ranges.length ? parseInt(ranges[0], 10) : fallback
+}
+
+/*
+POST /me/drive/root:/{path}:/createUploadSession
+PUT  {uploadUrl}   Content-Range: bytes {start}-{end}/{size}
+The upload URL is pre-authenticated: it must be called without the
+Authorization header. Each chunk is answered with 202 and the ranges still
+expected, the last one with the new item. After a failed chunk the session is
+asked where to resume, so nothing is sent twice and an interrupted chunk
+doesn't restart the file.
+*/
+async function uploadLarge(from, target, size, conflictBehavior) {
+    const session = await call(target + '/createUploadSession', 'POST', {
+        item: { '@microsoft.graph.conflictBehavior': conflictBehavior },
+    })
+    const uploadUrl = session.uploadUrl
+    const file = await FS.open(from, 'r')
+    try {
+        let offset = 0
+        for (let failures = 0; ; ) {
+            const length = Math.min(UPLOAD_CHUNK, size - offset)
+            const chunk = Buffer.alloc(length)
+            await file.read(chunk, 0, length, offset)
+            if (process.stdout.isTTY) {
+                console.warn(
+                    Colors.yellow('PUT'),
+                    decodeURIComponent(target),
+                    Math.floor((offset * 100) / size) + '%'
+                )
+            }
+            let resp
+            try {
+                resp = await fetchRetry(uploadUrl, {
+                    method: 'PUT',
+                    agent,
+                    body: chunk,
+                    headers: {
+                        'Content-Length': String(length),
+                        'Content-Range':
+                            'bytes ' +
+                            offset +
+                            '-' +
+                            (offset + length - 1) +
+                            '/' +
+                            size,
+                    },
+                })
+            } catch (err) {
+                debugPrint(err) // a network error: ask where to resume
+            }
+            if (resp && (resp.status === 200 || resp.status === 201)) {
+                return resp.json()
+            }
+            if (resp && resp.status === 202) {
+                offset = nextExpectedOffset(await resp.json(), offset + length)
+                failures = 0
+                continue
+            }
+            if (resp && resp.status < 500 && resp.status !== 416) {
+                await checkResponse(resp) // e.g. 409 name conflict: throws
+            }
+            if (++failures >= UPLOAD_ATTEMPTS) {
+                throw Error('Upload failed after ' + failures + ' attempts')
+            }
+            const status = await checkResponse(
+                await fetchRetry(uploadUrl, { agent })
+            )
+            offset = nextExpectedOffset(await status.json(), offset)
+        }
+    } catch (err) {
+        // Don't leave a half-written session behind (best effort).
+        await fetch(uploadUrl, { method: 'DELETE', agent }).catch(() => {})
+        throw err
+    } finally {
+        await file.close()
+    }
+}
+
 /*
 PUT /me/drive/root:/{parent-path}/{filename}:/content
 @microsoft.graph.conflictBehavior   fail, replace (def), or rename.
+Larger files go through uploadLarge() instead.
 */
 async function upload(op, from, target) {
     if (from.endsWith('/')) {
@@ -414,32 +526,27 @@ async function upload(op, from, target) {
         target = target + Path.basename(from)
     }
     target = sanitize(target)
-    const mime = Mime.lookup(from)
-    const data = await FS.readFile(from)
-    // TODO(#36): skip the PUT when the target's hash already matches
-    const result = await call(
-        target + '/content?@microsoft.graph.conflictBehavior=fail',
-        'PUT',
-        data,
-        { 'Content-Type': mime }
-    )
-    verifyUpload(data, result, target)
-    try {
-        if (op === MOVE) {
-            console.log(from, '=>', target, result.id)
-            await FS.unlink(from)
-        } else {
-            console.log(from, '->', target, result.id)
-        }
-    } catch (err) {
-        if (err.statusCode === 404) {
-            // A 404 on the PUT is how the API reports the simple-upload
-            // size cap; resumable sessions are #33.
-            return console.error(
-                'Skipped. Uploads larger than 100MiB are not yet supported.'
-            )
-        }
-        throw err
+    // TODO(#36): skip the upload when the target's hash already matches
+    const { size } = await FS.stat(from)
+    let result
+    if (size > UPLOAD_SESSION_THRESHOLD) {
+        result = await uploadLarge(from, target, size, 'fail')
+        await verifyUploadFile(from, result, target)
+    } else {
+        const data = await FS.readFile(from)
+        result = await call(
+            target + '/content?@microsoft.graph.conflictBehavior=fail',
+            'PUT',
+            data,
+            { 'Content-Type': Mime.lookup(from) }
+        )
+        verifyUpload(data, result, target)
+    }
+    if (op === MOVE) {
+        console.log(from, '=>', target, result.id)
+        await FS.unlink(from)
+    } else {
+        console.log(from, '->', target, result.id)
     }
 }
 

@@ -240,13 +240,13 @@ shares to _read_-only, whereas the latter removes all shares for the given item(
 Tracked on the [issue tracker](https://github.com/lionello/onedrive-cli/issues),
 so this stays a pointer rather than a second source of truth:
 
--   [#33](https://github.com/lionello/onedrive-cli/issues/33) — uploads larger than 100 MiB (`createUploadSession`)
 -   [#36](https://github.com/lionello/onedrive-cli/issues/36) — skip the transfer when the SHA1 already matches
 -   [#34](https://github.com/lionello/onedrive-cli/issues/34) — `chmod`: granting write access (`+w`)
 -   [#37](https://github.com/lionello/onedrive-cli/issues/37) — confirm the API honours gzip/deflate on downloads
 
 ## DONE
 
+-   Resumable upload sessions for files over 4 MiB, so large files upload without size limit or holding them in memory ([#33](https://github.com/lionello/onedrive-cli/issues/33))
 -   Microsoft Graph, so work and school accounts work too, with a sign-in that renews itself ([#8](https://github.com/lionello/onedrive-cli/issues/8), [#4](https://github.com/lionello/onedrive-cli/issues/4))
 -   Read-only [MCP](https://modelcontextprotocol.io) server (`onedrive mcp`)
 -   Photo albums via bundles (`onedrive album`)
