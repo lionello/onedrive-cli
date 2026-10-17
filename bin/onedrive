@@ -3,6 +3,7 @@ const Colors = require('colors/safe')
 const Crypto = require('crypto')
 const fetch = require('node-fetch')
 const FS = require('fs/promises')
+const { createReadStream } = require('fs')
 const Http = require('http')
 const Https = require('https')
 const Mime = require('mime')
@@ -14,7 +15,7 @@ const {
     startBrowserLogin,
     startDeviceLogin,
 } = require('../lib/auth')
-const { quickXorHash } = require('../lib/quickxorhash')
+const { quickXorHash, quickXorHashFile } = require('../lib/quickxorhash')
 
 // The $XDG_STATE_HOME directory contains state data that should persist between (application) restarts.
 const TOKEN_PATH = Path.join(
@@ -402,6 +403,38 @@ function verifyUpload(data, item, target) {
     }
 }
 
+// Whether a local file already has a remote item's content, judged by the
+// hash the item reports (quickXorHash, or sha1Hash where that is the only
+// one). The local file is streamed, never read whole. No hash: assume not.
+async function sameContent(local, item) {
+    const hashes = (item && item.file && item.file.hashes) || {}
+    if (hashes.quickXorHash) {
+        return (await quickXorHashFile(local)) === hashes.quickXorHash
+    }
+    if (hashes.sha1Hash) {
+        const sha1 = Crypto.createHash('sha1')
+        for await (const chunk of createReadStream(local)) {
+            sha1.update(chunk)
+        }
+        return (
+            sha1.digest('hex').toUpperCase() === hashes.sha1Hash.toUpperCase()
+        )
+    }
+    return false
+}
+
+// The item at a remote path, or undefined if there is none.
+async function existingItem(remote) {
+    try {
+        return await call(remote)
+    } catch (err) {
+        if (err.statusCode === 404) {
+            return undefined
+        }
+        throw err
+    }
+}
+
 /*
 PUT /me/drive/root:/{parent-path}/{filename}:/content
 @microsoft.graph.conflictBehavior   fail, replace (def), or rename.
@@ -414,9 +447,17 @@ async function upload(op, from, target) {
         target = target + Path.basename(from)
     }
     target = sanitize(target)
+    // Skip the transfer when the target already has this content (#36).
+    const existing = await existingItem(target)
+    if (existing && existing.file && (await sameContent(from, existing))) {
+        console.log(from, '==', target, '(unchanged)')
+        if (op === MOVE) {
+            await FS.unlink(from)
+        }
+        return
+    }
     const mime = Mime.lookup(from)
     const data = await FS.readFile(from)
-    // TODO(#36): skip the PUT when the target's hash already matches
     const result = await call(
         target + '/content?@microsoft.graph.conflictBehavior=fail',
         'PUT',
@@ -493,7 +534,17 @@ async function download(op, from, target) {
         target = target + Path.basename(from)
     }
     const remote = sanitize(from)
-    // TODO(#36): skip the GET when the local file's SHA1 already matches
+    // Skip the transfer when the local file already has this content (#36).
+    // Only an existing local file costs the extra metadata request.
+    const local = await FS.stat(target).catch(() => undefined)
+    if (
+        local &&
+        local.isFile() &&
+        (await sameContent(target, await call(remote)))
+    ) {
+        console.log(from, '==', target, '(unchanged)')
+        return op === MOVE ? rmItem(from) : undefined
+    }
     const data = await getContent(remote + '/content')
     await FS.writeFile(target, data)
     if (op === MOVE) {

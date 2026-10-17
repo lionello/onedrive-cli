@@ -241,12 +241,12 @@ Tracked on the [issue tracker](https://github.com/lionello/onedrive-cli/issues),
 so this stays a pointer rather than a second source of truth:
 
 -   [#33](https://github.com/lionello/onedrive-cli/issues/33) — uploads larger than 100 MiB (`createUploadSession`)
--   [#36](https://github.com/lionello/onedrive-cli/issues/36) — skip the transfer when the SHA1 already matches
 -   [#34](https://github.com/lionello/onedrive-cli/issues/34) — `chmod`: granting write access (`+w`)
 -   [#37](https://github.com/lionello/onedrive-cli/issues/37) — confirm the API honours gzip/deflate on downloads
 
 ## DONE
 
+-   `cp`/`mv` skip the transfer when the content already matches, by QuickXorHash or SHA-1 ([#36](https://github.com/lionello/onedrive-cli/issues/36))
 -   Microsoft Graph, so work and school accounts work too, with a sign-in that renews itself ([#8](https://github.com/lionello/onedrive-cli/issues/8), [#4](https://github.com/lionello/onedrive-cli/issues/4))
 -   Read-only [MCP](https://modelcontextprotocol.io) server (`onedrive mcp`)
 -   Photo albums via bundles (`onedrive album`)
