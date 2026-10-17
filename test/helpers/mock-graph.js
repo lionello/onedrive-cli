@@ -28,6 +28,7 @@ class MockGraph {
         this.tokenRequests = [] // grant_type of every token request
         this.refreshGate = null // while set, refresh answers wait for it
         this.corruptUploadHash = false
+        this.hashKind = 'quickXorHash' // or 'sha1Hash', as on older items
         this.nextId = 1
         this.items = new Map() // path ('' = root) -> item
         this.content = new Map() // path -> Buffer
@@ -111,7 +112,15 @@ class MockGraph {
             result.size = data.length
             result.file = {
                 mimeType: 'application/octet-stream',
-                hashes: { quickXorHash: quickXorHash(data) },
+                hashes:
+                    this.hashKind === 'sha1Hash'
+                        ? {
+                              sha1Hash: Crypto.createHash('sha1')
+                                  .update(data)
+                                  .digest('hex')
+                                  .toUpperCase(),
+                          }
+                        : { quickXorHash: quickXorHash(data) },
             }
         }
         return result
