@@ -108,7 +108,7 @@ Run `onedrive help` (or `-h`/`--help`) for this list at any time, and
 -   `chmod` - change sharing permissions
 -   `cp` - copies local file(s) to OneDrive or vice-versa
 -   `df` - shows OneDrive storage usage stats
--   `find` - find file(s) or folder(s) by name, optionally separated by `NUL`
+-   `find` - find file(s) or folder(s) by name, type, size, age or depth (`-maxdepth`, `-size`, `-mtime`, `-empty`, …), optionally separated by `NUL`
 -   `grep` - full-text search across the drive, listing matching paths
 -   `help` - shows list of supported commands
 -   `ln` - create a link to the remote item

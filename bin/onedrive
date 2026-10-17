@@ -1027,7 +1027,45 @@ async function stat(args) {
     }
 }
 
-async function find_paged(cont, expression) {
+// -size and -mtime style numbers: "+N" more than N, "-N" less, "N" exactly.
+function numericTest(arg, name) {
+    const m = /^([+-]?)(\d+)$/.exec(arg || '')
+    if (!m) {
+        throw Error('find: invalid argument to ' + name + ': ' + arg)
+    }
+    const n = Number(m[2])
+    return m[1] === '+'
+        ? value => value > n
+        : m[1] === '-'
+        ? value => value < n
+        : value => value === n
+}
+
+// -size [+-]N[ckMGb]: in units rounded up, like find(1); no suffix = 512 B.
+// A folder's size is that of everything in it, as Graph reports it.
+function sizeTest(arg) {
+    const m = /^([+-]?\d+)([ckMGb]?)$/.exec(arg || '')
+    if (!m) {
+        throw Error('find: invalid argument to -size: ' + arg)
+    }
+    const unit = { c: 1, k: 1024, M: 1024 ** 2, G: 1024 ** 3 }[m[2]] || 512
+    const test = numericTest(m[1], '-size')
+    return info => test(Math.ceil((info.size || 0) / unit))
+}
+
+// -mtime N (days) and -mmin N (minutes) since the last change, rounded down.
+function ageTest(arg, name, unit) {
+    const test = numericTest(arg, name)
+    const now = Date.now()
+    return info =>
+        test(Math.floor((now - Date.parse(info.lastModifiedDateTime)) / unit))
+}
+
+function isEmpty(info) {
+    return info.folder ? info.folder.childCount === 0 : info.size === 0
+}
+
+async function find_paged(cont, expression, depth = 1) {
     if (cont === undefined) {
         return
     }
@@ -1035,6 +1073,8 @@ async function find_paged(cont, expression) {
     result.value
         .filter(info => expression.dirOnly !== !info.folder)
         .filter(info => !expression.regex || expression.regex.test(info.name))
+        .filter(() => depth >= (expression.mindepth || 0))
+        .filter(info => expression.tests.every(test => test(info)))
         .map(absolute)
         .forEach(file => {
             if (expression.print0) {
@@ -1044,11 +1084,18 @@ async function find_paged(cont, expression) {
                 console.log(file)
             }
         })
-    await find_paged(result['@odata.nextLink'], expression)
-    // Recurse into subfolders
+    await find_paged(result['@odata.nextLink'], expression, depth)
+    // Recurse into subfolders, unless -maxdepth says this is deep enough
+    if (expression.maxdepth !== undefined && depth >= expression.maxdepth) {
+        return
+    }
     const folders = result.value.filter(info => info.folder)
     for (const info of folders) {
-        await find_paged(sanitize(absolute(info)) + '/children', expression)
+        await find_paged(
+            sanitize(absolute(info)) + '/children',
+            expression,
+            depth + 1
+        )
     }
 }
 
@@ -1063,10 +1110,11 @@ function globToRegExp(glob, flags) {
 async function find(args) {
     if (args.length === 0) {
         console.error(
-            'usage: find path ... [-print0] [-name GLOB] [-iname GLOB] [-regex REGEX] [-iregex REGEX] [-type d|f]'
+            'usage: find path ... [-print0] [-name GLOB] [-iname GLOB] [-regex REGEX] [-iregex REGEX] [-type d|f]\n' +
+                '                     [-maxdepth N] [-mindepth N] [-size [+-]N[ckMG]] [-mtime [+-]N] [-mmin [+-]N] [-empty]'
         )
     } else {
-        const expression = {}
+        const expression = { tests: [] }
         for (let index = 0; index < args.length; ) {
             switch (args[index]) {
                 case '-print0':
@@ -1090,6 +1138,32 @@ async function find(args) {
                     break
                 case '-iregex':
                     expression.regex = new RegExp(args.splice(index, 2)[1], 'i')
+                    break
+                case '-maxdepth':
+                case '-mindepth': {
+                    const [name, value] = args.splice(index, 2)
+                    if (!/^\d+$/.test(value || '')) {
+                        throw Error('find: invalid argument to ' + name)
+                    }
+                    expression[name.slice(1)] = Number(value)
+                    break
+                }
+                case '-size':
+                    expression.tests.push(sizeTest(args.splice(index, 2)[1]))
+                    break
+                case '-mtime':
+                    expression.tests.push(
+                        ageTest(args.splice(index, 2)[1], '-mtime', 864e5)
+                    )
+                    break
+                case '-mmin':
+                    expression.tests.push(
+                        ageTest(args.splice(index, 2)[1], '-mmin', 6e4)
+                    )
+                    break
+                case '-empty':
+                    args.splice(index, 1)
+                    expression.tests.push(isEmpty)
                     break
                 default:
                     index++
