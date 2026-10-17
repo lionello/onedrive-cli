@@ -26,6 +26,8 @@ class MockGraph {
         this.requests = [] // "METHOD /path" of every request, for assertions
         this.tokenRequests = [] // grant_type of every token request
         this.corruptUploadHash = false
+        this.gzipDownloads = false // gzip a download when the client accepts it
+        this.downloadEncodings = [] // Accept-Encoding of every download
         this.nextId = 1
         this.items = new Map() // path ('' = root) -> item
         this.content = new Map() // path -> Buffer
@@ -415,6 +417,13 @@ class MockGraph {
                         'bytes ' + start + '-' + end + '/' + data.length,
                 })
                 .end(data.subarray(start, end + 1))
+        }
+        const accept = req.headers['accept-encoding'] || ''
+        this.downloadEncodings.push(accept)
+        if (this.gzipDownloads && /\bgzip\b/.test(accept)) {
+            return res
+                .writeHead(200, { 'Content-Encoding': 'gzip' })
+                .end(require('zlib').gzipSync(data))
         }
         res.writeHead(200).end(data)
     }

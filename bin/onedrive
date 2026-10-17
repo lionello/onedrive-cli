@@ -99,10 +99,14 @@ function debugPrint(...data) {
     }
 }
 
+// Write to stdout, and when it is backed up (write() returns false) wait for
+// 'drain' before the caller produces more, so output never piles up in
+// memory ahead of a slow reader (#70).
 function print(data) {
-    // FIXME(#70): a false return means stdout is backed up; without
-    // hooking 'drain' the rest of a large file buffers in memory.
-    process.stdout.write(data)
+    if (process.stdout.write(data)) {
+        return Promise.resolve()
+    }
+    return new Promise(resolve => process.stdout.once('drain', resolve))
 }
 
 function humanize(num) {
@@ -705,10 +709,17 @@ async function mkdir(args) {
     }
 }
 
+// Streams the file: each chunk is written as it arrives, at the pace stdout
+// takes it, instead of downloading the whole file first.
 async function cat1(remote) {
-    remote = sanitize(remote)
-    const data = await getContent(remote + '/content')
-    print(data)
+    const url = sanitize(remote) + '/content'
+    if (process.stdout.isTTY) {
+        console.warn(Colors.yellow('GET'), decodeURIComponent(url))
+    }
+    const resp = await checkResponse(await send(url))
+    for await (const chunk of resp.body) {
+        await print(chunk)
+    }
 }
 
 async function cat(args) {
@@ -1782,6 +1793,15 @@ async function main(argv) {
             )
     }
 }
+
+// A reader that stops early (onedrive cat big.log | head) closes the pipe;
+// that ends the output, it isn't an error.
+process.stdout.on('error', err => {
+    if (err.code === 'EPIPE') {
+        process.exit(0)
+    }
+    throw err
+})
 
 main(process.argv).then(
     result => {
