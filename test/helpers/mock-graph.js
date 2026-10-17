@@ -67,6 +67,12 @@ class MockGraph {
         return this
     }
 
+    // Set an item's lastModifiedDateTime (ISO 8601).
+    setModified(path, modified) {
+        this.items.get(path).modified = modified
+        return this
+    }
+
     children(path) {
         const prefix = path === '' ? '' : path + '/'
         return [...this.items.keys()].filter(
@@ -86,7 +92,7 @@ class MockGraph {
         const result = {
             id: entry.id,
             name,
-            lastModifiedDateTime: '2026-01-02T03:04:05Z',
+            lastModifiedDateTime: entry.modified || '2026-01-02T03:04:05Z',
             createdBy: { user: { displayName: 'Test User' } },
         }
         if (path !== '') {
