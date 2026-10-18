@@ -73,6 +73,7 @@ beforeEach(async () => {
     mock.requests.length = 0
     mock.tokenRequests.length = 0
     mock.corruptUploadHash = false
+    mock.deviceError = null
 })
 
 describe('reading', () => {
@@ -249,6 +250,20 @@ describe('login and logout', () => {
         assert.equal(code, 0)
         assert.match(stdout, /Signed in read-only\./)
         assert.equal((await tokenStore.read()).scope, SCOPES.readonly)
+    })
+
+    test('an app that needs admin approval is explained', async () => {
+        mock.devicePolls = 0
+        mock.deviceError = {
+            error: 'invalid_grant',
+            error_description:
+                'AADSTS90094: Admin consent is required for the permissions requested by this application.',
+        }
+        const { code, stderr } = await run('login', '--device')
+        assert.equal(code, 1)
+        assert.match(stderr, /administrator to approve apps/)
+        assert.match(stderr, /Your own app registration/)
+        assert.doesNotMatch(stderr, /could not be renewed/)
     })
 
     test('login with a token saves it as is', async () => {
