@@ -11,6 +11,7 @@ const Path = require('path')
 const {
     Auth,
     TokenStore,
+    isConsentError,
     startBrowserLogin,
     startDeviceLogin,
 } = require('../lib/auth')
@@ -1796,7 +1797,15 @@ main(process.argv).then(
         // Only a missing *token file* means "not logged in"; any other ENOENT
         // is a local path that does not exist and is reported as such above.
         const relogin = "Run '" + commandName() + " login' to sign in."
-        if (err.path === TOKEN_PATH) {
+        if (isConsentError(err)) {
+            console.error(
+                'onedrive-cli was not granted access. If your organization ' +
+                    'requires an administrator to approve apps, ask one to ' +
+                    'approve it, or sign in with your own app registration: ' +
+                    'see "Your own app registration" in the README.'
+            )
+            process.exitCode = 1
+        } else if (err.path === TOKEN_PATH) {
             console.error("You're not logged in. " + relogin)
             process.exitCode = -1
         } else if (err.statusCode === 401 || err.code === 'unauthenticated') {

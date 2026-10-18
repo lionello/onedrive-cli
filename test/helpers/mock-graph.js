@@ -23,6 +23,7 @@ class MockGraph {
         this.codes = new Map() // authorization code -> PKCE challenge
         this.devicePolls = 0
         this.devicePendingPolls = 1
+        this.deviceError = null // a sign-in error to answer once pending ends
         this.requests = [] // "METHOD /path" of every request, for assertions
         this.tokenRequests = [] // grant_type of every token request
         this.corruptUploadHash = false
@@ -226,6 +227,9 @@ class MockGraph {
         if (grant === 'urn:ietf:params:oauth:grant-type:device_code') {
             if (++this.devicePolls <= this.devicePendingPolls) {
                 return json(400, { error: 'authorization_pending' })
+            }
+            if (this.deviceError) {
+                return json(400, this.deviceError)
             }
             return json(200, this.issueTokens())
         }

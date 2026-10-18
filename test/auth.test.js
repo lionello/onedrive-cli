@@ -8,8 +8,10 @@ const { after, before, beforeEach, describe, test } = require('node:test')
 const fetch = require('node-fetch')
 const {
     Auth,
+    AuthError,
     SCOPES,
     TokenStore,
+    isConsentError,
     pkcePair,
     resolveSettings,
     startBrowserLogin,
@@ -259,5 +261,32 @@ describe('device code sign-in', () => {
         const login = await startDeviceLogin(store)
         login.cancel()
         await assert.rejects(login.wait, { code: 'cancelled' })
+    })
+})
+
+describe('isConsentError', () => {
+    test('recognizes the errors that need an administrator', () => {
+        for (const message of [
+            'AADSTS65001: The user or administrator has not consented.',
+            'AADSTS65004: User declined to consent to access the app.',
+            'AADSTS90094: Admin consent is required.',
+        ]) {
+            assert.equal(
+                isConsentError(new AuthError('invalid_grant', message)),
+                true,
+                message
+            )
+        }
+        assert.equal(isConsentError({ code: 'consent_required' }), true)
+    })
+
+    test('leaves other sign-in errors alone', () => {
+        assert.equal(
+            isConsentError(
+                new AuthError('invalid_grant', 'AADSTS70008: expired')
+            ),
+            false
+        )
+        assert.equal(isConsentError(undefined), false)
     })
 })
