@@ -1076,6 +1076,76 @@ async function stat(args) {
     }
 }
 
+// OneDrive's sync clients mirror the drive into one of a handful of well-known
+// directories. The `OneDrive*` variables are set by the Windows client; the
+// rest are the defaults elsewhere.
+async function syncRoots() {
+    const home = require('os').homedir()
+    const roots = [
+        process.env.OneDrive,
+        process.env.OneDriveConsumer,
+        process.env.OneDriveCommercial,
+        Path.join(home, 'OneDrive'),
+    ].filter(Boolean)
+    // macOS mounts the drive under ~/Library/CloudStorage as OneDrive-Personal,
+    // or OneDrive-<Tenant> for work accounts, so the leaf name is not fixed.
+    const cloud = Path.join(home, 'Library', 'CloudStorage')
+    try {
+        const names = await FS.readdir(cloud)
+        roots.push(
+            ...names
+                .filter(name => name.startsWith('OneDrive'))
+                .map(name => Path.join(cloud, name))
+        )
+    } catch {
+        // No ~/Library/CloudStorage: not a Mac, or nothing is mounted there.
+    }
+    return roots
+}
+
+// Compared case-insensitively: every platform running the sync client has a
+// case-insensitive filesystem by default.
+function stripPrefix(path, root) {
+    const prefix = root.endsWith(Path.sep) ? root : root + Path.sep
+    return path.toLowerCase().startsWith(prefix.toLowerCase())
+        ? path.slice(prefix.length)
+        : undefined
+}
+
+// Only an explicitly local-looking path can name a file in the sync folder, so
+// a bare `Documents/report.docx` stays remote the way it is for every other
+// command. An absolute path that is not inside a sync folder stays remote too.
+async function localToRemote(file) {
+    if (!/^([~.]|\/|\\|[A-Za-z]:)/.test(file)) {
+        return undefined
+    }
+    const home = require('os').homedir()
+    const abs = Path.resolve(file.replace(/^~(?=[/\\]|$)/, home))
+    for (const root of await syncRoots()) {
+        const rel = stripPrefix(abs, Path.resolve(root))
+        if (rel !== undefined) {
+            return rel.split(Path.sep).join('/')
+        }
+    }
+    return undefined
+}
+
+async function realpath1(file) {
+    // `webUrl` is the item's own address and exists whether or not it has ever
+    // been shared -- unlike the sharing link `ln` mints (#12).
+    const result = await getItem((await localToRemote(file)) ?? file)
+    console.log(Colors.underline(result.webUrl))
+}
+
+async function realpath(args) {
+    if (args.length === 0) {
+        args = ['']
+    }
+    for (const cur of args) {
+        await realpath1(cur)
+    }
+}
+
 async function find_paged(cont, expression) {
     if (cont === undefined) {
         return
@@ -1739,7 +1809,7 @@ async function main(argv) {
             console.log(
                 '\nusage: ' +
                     commandName() +
-                    ' COMMAND [arguments]\n\ncommands: album albums cat chmod cp df find grep help ln login ls mcp mkdir mv rm sendmail stat wget'
+                    ' COMMAND [arguments]\n\ncommands: album albums cat chmod cp df find grep help ln login ls mcp mkdir mv realpath rm sendmail stat wget'
             )
             return
 
@@ -1789,6 +1859,9 @@ async function main(argv) {
 
         case 'mv':
             return mv(argv.slice(3))
+
+        case 'realpath':
+            return realpath(argv.slice(3))
 
         case 'rm':
             return rm(argv.slice(3))
