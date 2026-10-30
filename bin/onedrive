@@ -8,21 +8,40 @@ const Https = require('https')
 const Mime = require('mime')
 const Moment = require('moment')
 const Path = require('path')
-const Readline = require('readline')
-const Zlib = require('zlib')
+const {
+    Auth,
+    TokenStore,
+    startBrowserLogin,
+    startDeviceLogin,
+} = require('../lib/auth')
+const { quickXorHash } = require('../lib/quickxorhash')
 
 // The $XDG_STATE_HOME directory contains state data that should persist between (application) restarts.
 const TOKEN_PATH = Path.join(
     process.env.XDG_STATE_HOME || require('os').homedir(),
     '.onedrive-cli-token'
 )
-const API_BASE_URL = 'https://api.onedrive.com/v1.0'
+// Microsoft Graph. ONEDRIVE_GRAPH_URL points at a national cloud (e.g.
+// https://graph.microsoft.us/v1.0) or a local mock for testing.
+const API_BASE_URL = (
+    process.env.ONEDRIVE_GRAPH_URL || 'https://graph.microsoft.com/v1.0'
+).replace(/\/+$/, '')
+// The signed-in user's own drive: OneDrive for personal accounts, OneDrive for
+// Business for work or school accounts.
+const DRIVE = '/me/drive'
 const VERSION = require('../package.json').version
 
+const tokenStore = new TokenStore(TOKEN_PATH)
+const auth = new Auth(tokenStore)
+
+const httpAgent = new Http.Agent({ keepAlive: true })
 const httpsAgent = new Https.Agent({ keepAlive: true })
+// node-fetch picks the agent per request. Plain http is only ever used with a
+// local ONEDRIVE_GRAPH_URL (tests); Graph itself is https.
+const agent = url => (url.protocol === 'http:' ? httpAgent : httpsAgent)
 
 function makeAbsolute(url) {
-    return url.startsWith('https://') ? url : API_BASE_URL + url
+    return /^https?:\/\//.test(url) ? url : API_BASE_URL + url
 }
 
 async function checkResponse(response) {
@@ -102,20 +121,6 @@ function prettyPrint(num) {
     return padLeft(humanize(num), 6)
 }
 
-// Read the token fresh from disk on every request -- a ~1KB read next to each
-// HTTPS round-trip is negligible, and it means a re-login (even from another
-// process, e.g. the CLI) is picked up immediately by the long-running MCP
-// server instead of being masked by a stale in-memory copy. Trim so a trailing
-// newline in the file can't corrupt the Authorization header.
-async function lazyToken() {
-    return (await FS.readFile(TOKEN_PATH)).toString().trim()
-}
-
-async function saveToken(token) {
-    await FS.writeFile(TOKEN_PATH, token.trim())
-    return TOKEN_PATH
-}
-
 // The consumer OneDrive backend intermittently answers 503 (e.g.
 // itemDisabledDueToUserContentMigration while Microsoft migrates accounts to
 // the new photos stack) or throttles with 429, and an immediate retry
@@ -141,14 +146,50 @@ async function fetchRetry(url, options, attempts = 3) {
     }
 }
 
+// Every authenticated request goes through here. The access token is read
+// fresh from disk each time -- a ~1KB read next to each HTTPS round-trip is
+// negligible, and it means a re-login (even from another process, e.g. the CLI)
+// is picked up immediately by the long-running MCP server -- and renewed first
+// when it is about to expire. If Graph still answers 401 (e.g. the token was
+// revoked early), renew once and retry.
+async function send(url, options = {}) {
+    url = makeAbsolute(url)
+    const attempt = async forceRefresh =>
+        fetchRetry(url, {
+            agent,
+            ...options,
+            headers: {
+                ...options.headers,
+                Authorization:
+                    'Bearer ' + (await auth.accessToken({ forceRefresh })),
+            },
+        })
+    const resp = await attempt(false)
+    if (resp.status !== 401) {
+        return resp
+    }
+    if (await auth.canRefresh()) {
+        return attempt(true)
+    }
+    if ((await tokenStore.read()).legacy) {
+        throw Object.assign(
+            Error(
+                'The saved access token has expired, or was issued for the old ' +
+                    "OneDrive API. Run '" +
+                    commandName() +
+                    " login' to sign in again."
+            ),
+            { statusCode: 401 }
+        )
+    }
+    return resp
+}
+
 async function call(url, method, body, headers = {}) {
-    const token = await lazyToken()
     const options = {
-        agent: httpsAgent,
         body: body,
         method: method || 'GET',
         headers: {
-            Authorization: 'bearer ' + token,
             'Content-Type': 'application/octet-stream',
             Accept: 'application/json',
             ...headers,
@@ -158,15 +199,14 @@ async function call(url, method, body, headers = {}) {
         console.warn(Colors.yellow(options.method), decodeURIComponent(url))
     }
 
-    if (body instanceof Buffer) {
-        options.body = Zlib.gzipSync(body)
-        options.headers['Content-Encoding'] = 'gzip'
-    } else if (typeof body === 'object') {
+    // File content is sent as is: Graph does not document Content-Encoding on
+    // uploads, so a gzipped body could be stored compressed.
+    if (body !== undefined && !(body instanceof Buffer)) {
         options.body = JSON.stringify(body)
         options.headers['Content-Type'] = 'application/json'
     }
 
-    const resp = await fetchRetry(makeAbsolute(url), options)
+    const resp = await send(url, options)
     const data = await checkResponse(resp)
     return data.json()
 }
@@ -176,13 +216,7 @@ async function getContent(url) {
         console.warn(Colors.yellow('GET'), decodeURIComponent(url))
     }
 
-    const token = await lazyToken()
-    const resp = await fetchRetry(makeAbsolute(url), {
-        agent: httpsAgent,
-        headers: {
-            Authorization: 'bearer ' + token,
-        },
-    })
+    const resp = await send(url)
     const data = await checkResponse(resp)
     return data.buffer()
 }
@@ -191,15 +225,12 @@ async function getContent(url) {
 // so large files never come down whole. Returns the bytes plus the total size
 // parsed from Content-Range (undefined if the server didn't report it).
 async function getRange(url, offset, length) {
-    const token = await lazyToken()
-    const resp = await fetchRetry(makeAbsolute(url), {
-        agent: httpsAgent,
+    const resp = await send(url, {
         // Byte ranges are only meaningful on the identity representation, so
         // don't let node-fetch negotiate/inflate gzip (partial gzip won't
         // decode, and offsets wouldn't line up with the file's bytes).
         compress: false,
         headers: {
-            Authorization: 'bearer ' + token,
             Range: 'bytes=' + offset + '-' + (offset + length - 1),
         },
     })
@@ -225,20 +256,38 @@ async function getRange(url, offset, length) {
 }
 
 function sanitize(remote) {
+    const path = remote.replace(/^:?\/?\.?/, '').replace(/\/+$/, '')
+    // Graph addresses the root itself as /root, not as an empty path.
+    if (path === '') {
+        return DRIVE + '/root'
+    }
     // Escape all characters except the path delimiter '/'
     return (
-        '/drive/root:/' +
-        encodeURIComponent(remote.replace(/^:?\/?\.?/, '')).replace(
-            /%2f/gi,
-            '/'
-        ) +
-        ':'
+        DRIVE + '/root:/' + encodeURIComponent(path).replace(/%2f/gi, '/') + ':'
     )
 }
 
+// The ':/'-prefixed path of an item. parentReference.path reads like
+// /drive/root:/Folder, or /drives/{id}/root:/Folder for an item addressed by
+// drive. Some responses (e.g. search on work accounts) carry no path at all;
+// fall back to the bare name rather than fail.
 function absolute(info) {
-    const parent = info.parentReference.path.replace(/^\/drive\/root/, '')
-    return decodeURIComponent(parent) + '/' + info.name
+    const path = info.parentReference && info.parentReference.path
+    if (!path) {
+        return info.name
+    }
+    const parent = path.replace(/^\/drive(?:s\/[^/]+)?\/root/, '')
+    return decodePath(parent) + '/' + info.name
+}
+
+// The path comes percent-encoded; a stray '%' in a folder name must not turn
+// a listing into a URIError.
+function decodePath(path) {
+    try {
+        return decodeURIComponent(path)
+    } catch {
+        return path
+    }
 }
 
 /*
@@ -246,7 +295,7 @@ Filesystem         Size   Used  Avail Capacity Deleted
 dc1e3335a482dc20 1214Gi  164Gi 1050Gi      14%   780Mi
 */
 async function df() {
-    const result = await call('/drives')
+    const result = await call('/me/drives')
     console.log(
         Colors.bold(
             'Drive              Size   Used  Avail Capacity Deleted Status'
@@ -262,7 +311,7 @@ async function df() {
             prettyPrint(drive.quota.remaining),
             padLeft(capacity, 9),
             prettyPrint(drive.quota.deleted),
-            (drive.status && drive.status.state) || ''
+            drive.quota.state || ''
         )
     }
 }
@@ -304,10 +353,13 @@ async function ls_paged(total, cont) {
         }
         const count = d ? f.folder.childCount : 1
         total += count
+        // On work accounts an item can be created by an application or a
+        // system account rather than a user.
+        const by = f.createdBy && (f.createdBy.user || f.createdBy.application)
         console.log(
             mod,
             padLeft(count, 3),
-            f.createdBy.user.displayName,
+            (by && by.displayName) || '',
             padLeft(f.size, 10),
             m.format(
                 Math.abs(now - m) < threshold ? 'MMM DD HH:mm' : 'MMM DD  YYYY'
@@ -334,9 +386,25 @@ async function ls(folders) {
 const MOVE = 'move'
 const COPY = 'copy'
 
+// Check an uploaded file against the hash the server computed. Work and school
+// accounts report only quickXorHash; personal accounts report quickXorHash
+// and, on older items, sha1Hash. Use whichever is there.
+function verifyUpload(data, item, target) {
+    const hashes = (item.file && item.file.hashes) || {}
+    if (hashes.quickXorHash) {
+        if (quickXorHash(data) !== hashes.quickXorHash) {
+            throw Error('quickXorHash mismatch: ' + target)
+        }
+    } else if (hashes.sha1Hash) {
+        if (sha1hash(data).toUpperCase() !== hashes.sha1Hash.toUpperCase()) {
+            throw Error('sha1Hash mismatch: ' + target)
+        }
+    }
+}
+
 /*
-PUT /drive/root:/{parent-path}/{filename}:/content
-@name.conflictBehavior   fail, replace (def), or rename.
+PUT /me/drive/root:/{parent-path}/{filename}:/content
+@microsoft.graph.conflictBehavior   fail, replace (def), or rename.
 */
 async function upload(op, from, target) {
     if (from.endsWith('/')) {
@@ -348,17 +416,14 @@ async function upload(op, from, target) {
     target = sanitize(target)
     const mime = Mime.lookup(from)
     const data = await FS.readFile(from)
-    // TODO(#36): skip the PUT when the target's sha1Hash already matches
+    // TODO(#36): skip the PUT when the target's hash already matches
     const result = await call(
-        target + '/content?@name.conflictBehavior=fail',
+        target + '/content?@microsoft.graph.conflictBehavior=fail',
         'PUT',
         data,
         { 'Content-Type': mime }
     )
-    const sha1 = sha1hash(data).toUpperCase()
-    if (sha1 !== result.file.hashes.sha1Hash) {
-        throw Error('sha1Hash mismatch: ' + target)
-    }
+    verifyUpload(data, result, target)
     try {
         if (op === MOVE) {
             console.log(from, '=>', target, result.id)
@@ -379,7 +444,7 @@ async function upload(op, from, target) {
 }
 
 /*
-POST /drive/items/{parent-item}/children
+POST /me/drive/items/{parent-item}/children
 Content-Type: application/json
 Prefer: respond-async
 
@@ -395,8 +460,9 @@ async function wget(args) {
     } else {
         let target = args.pop()
         const from = args[0].startsWith('http') ? args[0] : 'http://' + args[0]
+        // Upload from URL is only available on personal accounts.
         const data = {
-            '@content.sourceUrl': from,
+            '@microsoft.graph.sourceUrl': from,
             name: Path.basename(target),
             file: {},
         }
@@ -414,7 +480,7 @@ async function wget(args) {
 }
 
 /*
-GET /drive/root:/{path and filename}:/content
+GET /me/drive/root:/{path and filename}:/content
 */
 async function download(op, from, target) {
     if (from.endsWith('/')) {
@@ -449,17 +515,15 @@ Content-type: application/json
   "name": "new-item-name.txt"
 }
 */
-function moveItem(item, path, name) {
-    const remote = sanitize(item)
+async function moveItem(item, path, name) {
+    // Graph moves by parent id. Resolving it also avoids putting a URL-escaped
+    // path into the JSON body (#71).
+    const parent = await call(sanitize(path))
     const data = {
         name: name,
-        parentReference: {
-            // FIXME(#71): sanitize() escapes for a URL, but this is a
-            // JSON body -- a parent with a space lands as 'Camera%20Roll'.
-            path: sanitize(path),
-        },
+        parentReference: { id: parent.id },
     }
-    return call(remote, 'PATCH', data)
+    return call(sanitize(item), 'PATCH', data)
 }
 
 async function rename(from, target) {
@@ -563,22 +627,15 @@ async function cp(args) {
 // DELETE returns 204 No Content on success, so don't go through call()
 // (which would try to parse a JSON body that isn't there).
 async function del(url) {
-    const token = await lazyToken()
     if (process.stdout.isTTY) {
         console.warn(Colors.yellow('DELETE'), decodeURIComponent(url))
     }
-    const resp = await fetchRetry(makeAbsolute(url), {
-        agent: httpsAgent,
-        method: 'DELETE',
-        headers: {
-            Authorization: 'bearer ' + token,
-        },
-    })
+    const resp = await send(url, { method: 'DELETE' })
     await checkResponse(resp)
 }
 
 /*
-DELETE /drive/root:/{path}:
+DELETE /me/drive/root:/{path}:
 Returns 204 No Content on success.
 Supports files and folders (recursive delete).
 */
@@ -614,7 +671,7 @@ function mv(args) {
 }
 
 /*
-POST /drive/items/{parent-item}/children
+POST /me/drive/items/{parent-item}/children
 Content-Type: application/json
 
 {
@@ -664,6 +721,119 @@ async function cat(args) {
     }
 }
 
+// head and tail read a file in chunks through HTTP Range requests, so only
+// the part that is printed (plus at most one chunk) comes down.
+const RANGE_CHUNK = 64 * 1024
+const NEWLINE = 0x0a
+
+// -c BYTES, -n LINES (also -cBYTES / -nLINES); the default is -n 10.
+function parseHeadTailArgs(args) {
+    const options = { lines: 10 }
+    const files = []
+    for (let index = 0; index < args.length; index++) {
+        const m = /^-([cn])(\d*)$/.exec(args[index])
+        if (!m) {
+            files.push(args[index])
+            continue
+        }
+        const value = m[2] !== '' ? m[2] : args[++index]
+        if (!/^\d+$/.test(value || '')) {
+            throw Error('invalid number: ' + value)
+        }
+        if (m[1] === 'c') {
+            options.bytes = Number(value)
+            delete options.lines
+        } else {
+            options.lines = Number(value)
+            delete options.bytes
+        }
+    }
+    return { options, files }
+}
+
+async function head1(remote, options) {
+    const url = sanitize(remote) + '/content'
+    if (options.bytes !== undefined) {
+        if (options.bytes > 0) {
+            print((await getRange(url, 0, options.bytes)).buffer)
+        }
+        return
+    }
+    const chunks = []
+    let newlines = 0
+    for (let offset = 0; options.lines > 0; ) {
+        const { buffer, total } = await getRange(url, offset, RANGE_CHUNK)
+        const end = buffer.findIndex(
+            byte => byte === NEWLINE && ++newlines === options.lines
+        )
+        if (end >= 0) {
+            chunks.push(buffer.subarray(0, end + 1))
+            break
+        }
+        chunks.push(buffer)
+        offset += buffer.length
+        if (buffer.length < RANGE_CHUNK || (total && offset >= total)) {
+            break
+        }
+    }
+    print(Buffer.concat(chunks))
+}
+
+async function tail1(remote, options) {
+    const item = await call(sanitize(remote))
+    if (item.folder) {
+        throw Error(remote + ': Is a directory')
+    }
+    const url = sanitize(remote) + '/content'
+    const size = item.size
+    if (options.bytes !== undefined) {
+        const length = Math.min(options.bytes, size)
+        if (length > 0) {
+            print((await getRange(url, size - length, length)).buffer)
+        }
+        return
+    }
+    if (options.lines === 0 || size === 0) {
+        return
+    }
+    // Walk back from the end. A newline in the very last byte ends the last
+    // line rather than starting a new one, so it isn't counted.
+    const chunks = []
+    let start
+    let newlines = 0
+    for (let end = size; end > 0 && start === undefined; ) {
+        const from = Math.max(0, end - RANGE_CHUNK)
+        const { buffer } = await getRange(url, from, end - from)
+        for (let i = buffer.length - 1; i >= 0; i--) {
+            if (
+                buffer[i] === NEWLINE &&
+                from + i !== size - 1 &&
+                ++newlines === options.lines
+            ) {
+                start = i + 1
+                break
+            }
+        }
+        chunks.unshift(start === undefined ? buffer : buffer.subarray(start))
+        end = from
+    }
+    print(Buffer.concat(chunks))
+}
+
+async function headTail(name, read, args) {
+    const { options, files } = parseHeadTailArgs(args)
+    if (files.length < 1) {
+        console.error('usage: ' + name + ' [-c bytes | -n lines] file ...')
+        return
+    }
+    for (const [index, file] of files.entries()) {
+        if (files.length > 1) {
+            console.log((index > 0 ? '\n' : '') + '==> ' + file + ' <==')
+        }
+        await read(file, options)
+    }
+}
+
 // How the user invoked us, so the landing page can echo a runnable command.
 // Whatever this returns is pasted into a shell verbatim, so every branch has
 // to be runnable on its own: a short path relative to the cwd when we live
@@ -690,36 +860,7 @@ function commandName() {
     return Path.resolve(argv1)
 }
 
-function buildLoginUrl(readonly, state) {
-    const scope = readonly ? 'onedrive.readonly' : 'onedrive.readwrite'
-    // state doubles as the CSRF nonce. The loopback flow packs "<nonce>.<port>"
-    // in here so the callback page knows which local port to forward the token
-    // to; a plain login just uses an unguessable nonce.
-    state = state || Crypto.randomBytes(16).toString('hex')
-    // Pass our command name to the landing page via a redirect_uri query
-    // param so it can show a runnable command.
-    const redirect =
-        'https://www.lunesu.com/onedrive-cli/oauthcallbackhandler.html?cmd=' +
-        encodeURIComponent(commandName())
-    return (
-        'https://login.live.com/oauth20_authorize.srf?client_id=0000000040197E82&scope=' +
-        scope +
-        '&response_type=token&state=' +
-        encodeURIComponent(state) +
-        '&redirect_uri=' +
-        encodeURIComponent(redirect)
-    )
-}
-
-function loginUrl(readonly) {
-    console.log('\nBrowse to', Colors.underline(buildLoginUrl(readonly)))
-}
-
-// Start a throwaway loopback listener that the callback page forwards the token
-// to (see docs/oauthcallbackhandler.html). Resolves { url, wait, cancel }: open
-// `url` to sign in, `wait` resolves with the captured token, `cancel` shuts the
-// listener down. The token goes browser -> 127.0.0.1 directly, so it never
-// passes through stdio or the model.
+// Rejects if `promise` has not settled after `ms` milliseconds.
 function withTimeout(promise, ms) {
     let timer
     const timeout = new Promise((_, reject) => {
@@ -729,66 +870,6 @@ function withTimeout(promise, ms) {
         )
     })
     return Promise.race([promise, timeout]).finally(() => clearTimeout(timer))
-}
-
-// A 1x1 transparent GIF, sent as the reply to an accepted token. The callback
-// page has to deliver the token with an <img> GET (Chrome blocks its fetch to a
-// loopback address; a no-cors subresource still gets through), and an image load
-// exposes no status -- only whether the bytes decoded. Answering with real image
-// bytes when, and only when, we accepted the token turns that into the ack the
-// page can observe: a refusal is text, which fails to decode.
-const ACK_GIF = Buffer.from(
-    'R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw==',
-    'base64'
-)
-
-function loopbackLogin(readonly) {
-    const nonce = Crypto.randomBytes(16).toString('hex')
-    const server = Http.createServer()
-    let settle
-    const wait = new Promise(resolve => (settle = resolve))
-    server.on('request', (req, res) => {
-        const u = new URL(req.url, 'http://127.0.0.1')
-        res.setHeader('Access-Control-Allow-Origin', '*')
-        // Chrome gates requests from a public page to a loopback address behind
-        // a Private Network Access preflight, so the callback page's fetch
-        // arrives as OPTIONS first. Answer it as a preflight and nothing more:
-        // treating it as the delivery would settle the token and let login()
-        // close the listener before the real GET lands, leaving the page unable
-        // to read a 200 and stuck on the manual-copy fallback.
-        if (req.method === 'OPTIONS') {
-            res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS')
-            res.setHeader('Access-Control-Allow-Private-Network', 'true')
-            res.setHeader('Access-Control-Max-Age', '600')
-            return res.writeHead(204).end()
-        }
-        if (u.pathname !== '/callback') {
-            return res.writeHead(404).end()
-        }
-        const token = u.searchParams.get('token')
-        if (!token || u.searchParams.get('nonce') !== nonce) {
-            return res.writeHead(400).end('bad request')
-        }
-        res.writeHead(200, {
-            'Content-Type': 'image/gif',
-            'Content-Length': ACK_GIF.length,
-        })
-        res.end(ACK_GIF)
-        settle(extractToken(token))
-    })
-    return new Promise((resolve, reject) => {
-        server.on('error', reject)
-        server.listen(process.env.PORT | 0, '127.0.0.1', () => {
-            resolve({
-                url: buildLoginUrl(
-                    readonly,
-                    nonce + '.' + server.address().port
-                ),
-                wait,
-                cancel: () => server.close(),
-            })
-        })
-    })
 }
 
 // Best-effort: open the sign-in URL in the user's browser (CLI only).
@@ -809,19 +890,6 @@ function openBrowser(url) {
     }
 }
 
-function ask(question) {
-    const rl = Readline.createInterface({
-        input: process.stdin,
-        output: process.stdout,
-    })
-    return new Promise(resolve => {
-        rl.question(question, answer => {
-            rl.close()
-            resolve(answer)
-        })
-    })
-}
-
 // Accept a bare access token or a whole pasted "<cmd> login <token>" line.
 function extractToken(input) {
     input = input.trim()
@@ -829,100 +897,96 @@ function extractToken(input) {
     return (m ? m[1] : input).trim()
 }
 
-async function login(args) {
-    let loginMessage = 'Access token was saved to '
-    let readonly = false
-    if (args[0] === '-r' || args[0] === '--readonly') {
-        loginMessage = 'Read-Only ' + loginMessage
-        readonly = true
-        args.shift()
-    }
-    const arg = args.pop()
-    if (typeof arg === 'string') {
-        return loginMessage + (await saveToken(arg))
-    }
-
-    // No token given. The interactive flow below opens a browser and blocks on
-    // stdin/the loopback listener -- but without a terminal (CI, or invoked by an
-    // agent) stdin never delivers a pasted token and no browser can reach the
-    // loopback, so it would hang until the job times out. Fail fast instead:
-    // print the sign-in URL and tell the caller to re-run with the token.
-    // ($CI covers runners that allocate a pseudo-TTY but still can't sign in;
-    // CI=false is the conventional opt-out, so honor it like ci-info does.)
-    if (
-        !process.stdin.isTTY ||
-        (process.env.CI && process.env.CI !== 'false')
-    ) {
-        throw Error(
-            'Cannot sign in interactively without a terminal (e.g. in CI or ' +
-                'when invoked by an agent).\nOpen this URL in a browser, sign ' +
-                'in, then re-run with the token from the callback page:\n\n  ' +
-                buildLoginUrl(readonly) +
-                '\n\n  ' +
-                commandName() +
-                ' login' +
-                (readonly ? ' -r' : '') +
-                ' <access_token>'
-        )
-    }
-
-    // No token given: open the browser and capture it via a loopback listener.
-    let lb = null
-    try {
-        lb = await loopbackLogin(readonly)
-    } catch {
-        // Couldn't bind a local port; fall back to the manual paste prompt.
-    }
-    if (!lb) {
-        loginUrl(readonly)
-        const pasted = extractToken(
-            await ask('\nPaste the token (or the whole command) here: ')
-        )
-        if (pasted) {
-            return loginMessage + (await saveToken(pasted))
-        }
-        return console.error('usage: login [-r|--readonly] [access_token]')
-    }
-
-    console.log(
-        '\nOpening your browser to sign in. If it does not open, visit:'
-    )
-    console.log(Colors.underline(lb.url))
-    openBrowser(lb.url)
-
-    // Accept whichever arrives first: the loopback capture (local browser) or a
-    // pasted token (e.g. the browser is on another machine / a dev container).
-    const rl = Readline.createInterface({
-        input: process.stdin,
-        output: process.stdout,
-    })
-    let pastedWon = false
-    const pasted = new Promise(resolve =>
-        rl.question(
-            '\nWaiting for sign-in, or paste the token here: ',
-            answer => {
-                pastedWon = true
-                resolve(extractToken(answer))
+function parseLoginArgs(args) {
+    const options = {}
+    const rest = []
+    for (let i = 0; i < args.length; i++) {
+        const arg = args[i]
+        switch (arg) {
+            case '-r':
+            case '--readonly':
+                options.readonly = true
+                break
+            case '--device':
+                options.device = true
+                break
+            case '--tenant':
+            case '--client-id': {
+                const value = args[++i]
+                if (!value) {
+                    throw Error(arg + ' needs a value')
+                }
+                options[arg === '--tenant' ? 'tenant' : 'clientId'] = value
+                break
             }
-        )
+            default:
+                rest.push(arg)
+        }
+    }
+    return { options, token: rest.join(' ') }
+}
+
+// Without a terminal (CI, or invoked by an agent) a browser on this machine
+// may not be the one signing in, so use a device code instead: it can be
+// entered on any device, and the command finishes on its own once it is.
+// ($CI covers runners that allocate a pseudo-TTY; CI=false is the conventional
+// opt-out, so honor it like ci-info does.)
+function isInteractive() {
+    return (
+        process.stdin.isTTY && !(process.env.CI && process.env.CI !== 'false')
     )
-    let token
-    try {
-        token = await Promise.race([lb.wait, pasted])
-    } finally {
-        lb.cancel()
-        rl.close()
-    }
-    // A loopback capture leaves the prompt line dangling (no Enter was pressed),
-    // so the success message would print right after it. Return to the start of
-    // the line (and clear it on a TTY) so the result reads cleanly.
-    if (!pastedWon) {
-        process.stdout.write('\r' + (process.stdout.isTTY ? '\x1b[K' : ''))
-    }
+}
+
+async function login(args) {
+    const { options, token } = parseLoginArgs(args)
     if (token) {
-        return loginMessage + (await saveToken(token))
+        // A hand-pasted access token works until it expires (about an hour)
+        // and cannot be renewed.
+        return (
+            'Access token was saved to ' +
+            (await tokenStore.write(extractToken(token)))
+        )
     }
-    console.error('usage: login [-r|--readonly] [access_token]')
+    if (options.device || !isInteractive()) {
+        const device = await startDeviceLogin(tokenStore, options)
+        console.log(
+            '\n' +
+                (device.message ||
+                    'To sign in, open ' +
+                        device.verificationUri +
+                        ' and enter the code ' +
+                        device.userCode +
+                        '.')
+        )
+        await device.wait
+    } else {
+        const browser = await startBrowserLogin(tokenStore, options)
+        console.log(
+            '\nOpening your browser to sign in. If it does not open, visit:'
+        )
+        console.log(Colors.underline(browser.url))
+        console.log(
+            Colors.gray(
+                "\nSigning in from another device? Press Ctrl-C and run '" +
+                    commandName() +
+                    " login --device'."
+            )
+        )
+        openBrowser(browser.url)
+        await browser.wait
+    }
+    return (
+        (options.readonly ? 'Signed in read-only.' : 'Signed in.') +
+        ' The token is saved to ' +
+        TOKEN_PATH +
+        ' and renews itself.'
+    )
+}
+
+async function logout() {
+    return (await tokenStore.remove())
+        ? 'Signed out: removed ' + TOKEN_PATH
+        : 'Not signed in.'
 }
 
 async function ln(args) {
@@ -930,7 +994,7 @@ async function ln(args) {
         console.error('usage: ln file')
     } else {
         const remote = sanitize(args[0])
-        const result = await call(remote + '/action.createLink', 'POST', {
+        const result = await call(remote + '/createLink', 'POST', {
             type: 'view',
         })
         console.log(Colors.underline(result.link.webUrl))
@@ -1035,14 +1099,14 @@ async function chmod(args) {
 
 async function sendmail1(email, file) {
     const payload = {
-        requireSignIn: 'true',
-        sendInvitation: 'true',
+        requireSignIn: true,
+        sendInvitation: true,
         roles: ['write'],
         recipients: [{ email: email }],
         // "message": "You were invited by x to access y"
     }
     const remote = sanitize(file)
-    const result = await call(remote + '/action.invite', 'POST', payload)
+    const result = await call(remote + '/invite', 'POST', payload)
     console.log(JSON.stringify(result, undefined, 2))
 }
 
@@ -1150,8 +1214,19 @@ async function find(args) {
     }
 }
 
+// Graph's search function takes the query as an OData string literal, in
+// which a single quote is written twice.
+function searchUrl(query) {
+    return (
+        DRIVE +
+        "/root/search(q='" +
+        encodeURIComponent(query.replace(/'/g, "''")) +
+        "')"
+    )
+}
+
 /*
-GET /drive/root/view.search?q={query}
+GET /me/drive/root/search(q='{query}')
 Server-side full-text search across the whole drive, listing the paths of
 matching files (like `grep -rl`). OneDrive pages the matches for us. The API
 ignores any folder anchor, so the search is always global -- pipe to e.g.
@@ -1173,8 +1248,7 @@ async function grep(args) {
             'usage: grep pattern   (full-text; use `find -iname` for filenames)'
         )
     } else {
-        const query = encodeURIComponent(args[0])
-        await grep_paged('/drive/root/view.search?q=' + query)
+        await grep_paged(searchUrl(args[0]))
     }
 }
 
@@ -1182,10 +1256,11 @@ async function grep(args) {
 Albums are "bundles" -- driveItems with a bundle facet whose bundle.album is
 set. They live outside the folder hierarchy, so they are addressed by item id
 rather than by path:
-  GET    /drive/bundles?filter=bundle/album ne null   list albums
-  POST   /drive/bundles                               create a bundle/album
-  POST   /drive/bundles/{id}/children                 add an existing item (by id) to the bundle
-  DELETE /drive/bundles/{id}/children/{item-id}       remove an item from the bundle (keeps the file)
+  GET    /me/drive/bundles?filter=bundle/album ne null   list albums
+  POST   /me/drive/bundles                               create a bundle/album
+  POST   /me/drive/bundles/{id}/children                 add an existing item (by id) to the bundle
+  DELETE /me/drive/bundles/{id}/children/{item-id}       remove an item from the bundle (keeps the file)
+Bundles exist on personal accounts only.
 The album filter is not just an optimization: on accounts migrated to the new
 photos stack, the unfiltered enumeration serves a stale pre-migration view
 that misses newly created albums, while the filtered query hits the current
@@ -1194,7 +1269,7 @@ needs the OneDrive web UI.)
 */
 async function listAlbums() {
     const albums = []
-    let cont = '/drive/bundles?filter=bundle/album%20ne%20null'
+    let cont = DRIVE + '/bundles?filter=bundle/album%20ne%20null'
     while (cont) {
         const result = await call(cont)
         for (const b of result.value) {
@@ -1217,7 +1292,7 @@ async function albumByName(name) {
 
 async function albumItems(album) {
     const items = []
-    let cont = '/drive/items/' + album.id + '/children'
+    let cont = DRIVE + '/items/' + album.id + '/children'
     while (cont) {
         const result = await call(cont)
         items.push(...result.value)
@@ -1263,7 +1338,7 @@ async function album(args) {
             if (args.length !== 1) {
                 return console.error('usage: album create name')
             }
-            const result = await call('/drive/bundles', 'POST', {
+            const result = await call(DRIVE + '/bundles', 'POST', {
                 name: args[0],
                 bundle: { album: {} },
                 '@name.conflictBehavior': 'fail',
@@ -1280,7 +1355,7 @@ async function album(args) {
             for (const cur of args.slice(1)) {
                 const info = await getItem(cur)
                 await call(
-                    '/drive/bundles/' + target.id + '/children',
+                    DRIVE + '/bundles/' + target.id + '/children',
                     'POST',
                     {
                         id: info.id,
@@ -1299,7 +1374,7 @@ async function album(args) {
             for (const cur of args.slice(1)) {
                 const info = await getItem(cur)
                 await del(
-                    '/drive/bundles/' + target.id + '/children/' + info.id
+                    DRIVE + '/bundles/' + target.id + '/children/' + info.id
                 )
                 console.log(`removed '${cur}' from '${target.name}'`)
             }
@@ -1345,7 +1420,7 @@ async function listFolder(path) {
 
 async function searchContent(query) {
     const paths = []
-    let cont = '/drive/root/view.search?q=' + encodeURIComponent(query)
+    let cont = searchUrl(query)
     while (cont) {
         const result = await call(cont)
         for (const f of result.value) {
@@ -1400,7 +1475,7 @@ async function mcp() {
             return 'Not logged in to OneDrive. Call login_onedrive to sign in, then retry.'
         }
         if (err.statusCode === 401 || err.code === 'unauthenticated') {
-            return 'The OneDrive access token is missing or expired. Call login_onedrive to sign in again, then retry.'
+            return 'The OneDrive sign-in has expired and could not be renewed. Call login_onedrive to sign in again, then retry.'
         }
         if (err.statusCode === 403) {
             return 'Access denied -- the saved token may be read-only. Call login_onedrive with readonly:false for read-write access, then retry.'
@@ -1599,11 +1674,12 @@ async function mcp() {
             inputSchema: {},
         },
         async () => {
-            const result = await call('/drives')
+            const result = await call('/me/drives')
             return asJson(
                 result.value.map(d => ({
                     id: d.id,
-                    status: d.status ? d.status.state : null,
+                    type: d.driveType,
+                    status: (d.quota && d.quota.state) || null,
                     quota: d.quota,
                 }))
             )
@@ -1615,99 +1691,103 @@ async function mcp() {
         {
             title: 'Log in to OneDrive',
             description:
-                'Authenticate to OneDrive when calls fail with an authentication error. Presents a sign-in link out-of-band and captures the token locally via a loopback listener -- nothing sensitive passes through this conversation. If the link cannot be presented or the listener is unreachable (e.g. a dev container), it returns loginUrl; open it, sign in, then call this tool again with the token shown on the page.',
+                'Authenticate to OneDrive when calls fail with an authentication error. By default it presents a browser sign-in link; the browser hands the result straight back to this server, so nothing sensitive passes through this conversation. With device:true it returns a short code for the user to enter at a Microsoft page on any device -- use that when the browser is not on this machine (SSH, dev containers). The sign-in renews itself afterwards.',
             inputSchema: {
-                token: z
-                    .string()
-                    .optional()
+                device: z
+                    .boolean()
+                    .default(false)
                     .describe(
-                        'Fallback: an access token copied from the callback page, saved directly. Omit to start the interactive sign-in.'
+                        'Sign in with a device code instead of a browser on this machine.'
                     ),
                 readonly: z
                     .boolean()
                     .default(true)
                     .describe(
-                        'Request read-only access (onedrive.readonly). Defaults to true since this MCP server only reads; set false to grant read-write.'
+                        'Request read-only access (Files.Read.All). Defaults to true since this MCP server only reads; set false to grant read-write.'
+                    ),
+                token: z
+                    .string()
+                    .optional()
+                    .describe(
+                        'Fallback: an access token obtained elsewhere, saved as is. It expires in about an hour and cannot be renewed.'
                     ),
             },
         },
-        async ({ token, readonly }) => {
+        async ({ device, readonly, token }) => {
             if (token) {
-                await saveToken(extractToken(token))
+                await tokenStore.write(extractToken(token))
                 return asJson({ ok: true, message: 'Access token saved.' })
             }
-            let lb = null
-            try {
-                lb = await loopbackLogin(readonly)
-            } catch {
-                // Couldn't bind a local port; fall through to the paste path.
+
+            if (device) {
+                const login = await startDeviceLogin(tokenStore, { readonly })
+                // Polling continues in the background and saves the token once
+                // the user finishes; every request re-reads the token file.
+                login.wait.catch(() => {})
+                return asJson({
+                    ok: false,
+                    pending: true,
+                    verificationUri: login.verificationUri,
+                    userCode: login.userCode,
+                    expiresInSeconds: login.expiresIn,
+                    message:
+                        'Ask the user to open verificationUri on any device and enter userCode. The token is saved automatically once they finish -- then retry the request.',
+                })
             }
-            const url = lb ? lb.url : buildLoginUrl(readonly)
+
+            const login = await startBrowserLogin(tokenStore, { readonly })
 
             // Only present the link via URL-mode elicitation if the client
             // actually advertises support -- attempting it otherwise makes the
             // client surface an "unsupported" error. When supported, wait for
-            // the loopback to catch the token and finish here.
+            // the browser to come back to the loopback and finish here.
             const caps = server.server.getClientCapabilities()
             const canUrlElicit = !!(
                 caps &&
                 caps.elicitation &&
                 caps.elicitation.url
             )
-            if (canUrlElicit && lb) {
+            if (canUrlElicit) {
                 try {
                     const result = await server.server.elicitInput({
                         mode: 'url',
                         message:
-                            'Sign in to OneDrive in your browser to authorize this server. The token is captured locally; nothing is pasted here.',
-                        url,
+                            'Sign in to OneDrive in your browser to authorize this server. The browser hands the sign-in back to this server directly; nothing is pasted here.',
+                        url: login.url,
                         elicitationId: Crypto.randomBytes(8).toString('hex'),
                     })
                     if (result.action !== 'accept') {
-                        lb.cancel()
+                        login.cancel()
                         return asJson({
                             ok: false,
                             action: result.action,
                             message: 'Login was ' + result.action + '.',
                         })
                     }
-                    const captured = await withTimeout(lb.wait, 120000)
-                    await saveToken(captured)
-                    lb.cancel()
-                    return asJson({ ok: true, message: 'Access token saved.' })
+                    await withTimeout(login.wait, 120000)
+                    return asJson({ ok: true, message: 'Signed in.' })
                 } catch {
-                    // Presented, but the token didn't arrive in time.
-                    lb.cancel()
+                    // Presented, but the browser never came back in time.
+                    login.cancel()
                     return asJson({
                         ok: false,
-                        loginUrl: url,
                         message:
-                            'Did not receive the token automatically (expected in dev containers, where the browser cannot reach this server). Open loginUrl, sign in, then call login_onedrive again with the token from the page.',
+                            'The browser sign-in did not complete (expected in dev containers, where the browser cannot reach this server). Call login_onedrive with device:true to sign in with a code instead.',
                     })
                 }
             }
 
-            // No URL-mode elicitation (or no loopback): this is NOT an error --
-            // return the sign-in URL for the agent to hand to the user. Keep the
-            // loopback listening so the token is captured and saved out-of-band
-            // when the user opens the link (every request re-reads the token
-            // file, so a subsequent call just works).
-            if (lb) {
-                lb.wait.then(saveToken, () => {}).finally(() => lb.cancel())
-                setTimeout(() => lb.cancel(), 5 * 60 * 1000).unref()
-                return asJson({
-                    ok: false,
-                    pending: true,
-                    loginUrl: url,
-                    message:
-                        'Ask the user to open loginUrl in a browser and sign in. If the browser is on this machine, the token is captured and saved automatically -- then just retry the request. In a dev container (browser elsewhere), have the user copy the token shown on the page and call login_onedrive again with it in the token argument.',
-                })
-            }
+            // No URL-mode elicitation: this is NOT an error -- return the
+            // sign-in URL for the agent to hand to the user, and keep listening
+            // for a few minutes so the sign-in completes out-of-band.
+            login.wait.catch(() => {})
+            setTimeout(login.cancel, 5 * 60 * 1000).unref()
             return asJson({
                 ok: false,
-                loginUrl: url,
+                pending: true,
+                loginUrl: login.url,
                 message:
-                    'Ask the user to open loginUrl and sign in, then call login_onedrive again with the token shown on the page.',
+                    'Ask the user to open loginUrl in a browser on this machine and sign in. The token is saved automatically -- then retry the request. If the browser is on another device, call login_onedrive with device:true instead.',
             })
         }
     )
@@ -1739,7 +1819,7 @@ async function main(argv) {
             console.log(
                 '\nusage: ' +
                     commandName() +
-                    ' COMMAND [arguments]\n\ncommands: album albums cat chmod cp df find grep help ln login ls mcp mkdir mv rm sendmail stat wget'
+                    ' COMMAND [arguments]\n\ncommands: album albums cat chmod cp df find grep head help ln login logout ls mcp mkdir mv rm sendmail stat tail wget'
             )
             return
 
@@ -1772,11 +1852,17 @@ async function main(argv) {
         case 'grep':
             return grep(argv.slice(3))
 
+        case 'head':
+            return headTail('head', head1, argv.slice(3))
+
         case 'ln':
             return ln(argv.slice(3))
 
         case 'login':
             return login(argv.slice(3))
+
+        case 'logout':
+            return logout()
 
         case 'ls':
             return ls(argv.slice(3))
@@ -1798,6 +1884,9 @@ async function main(argv) {
 
         case 'stat':
             return stat(argv.slice(3))
+
+        case 'tail':
+            return headTail('tail', tail1, argv.slice(3))
 
         case 'wget':
             return wget(argv.slice(3))
@@ -1823,21 +1912,22 @@ main(process.argv).then(
         console.error(Colors.red(err.localizedMessage || err.message))
         debugPrint(err)
         // Auth failures: guide the user to re-authenticate. Exit -1 so xargs stops.
-        if (err.path === TOKEN_PATH || err.code === 'ENOENT') {
-            console.error("You're not logged in.")
-            loginUrl()
+        // Only a missing *token file* means "not logged in"; any other ENOENT
+        // is a local path that does not exist and is reported as such above.
+        const relogin = "Run '" + commandName() + " login' to sign in."
+        if (err.path === TOKEN_PATH) {
+            console.error("You're not logged in. " + relogin)
             process.exitCode = -1
         } else if (err.statusCode === 401 || err.code === 'unauthenticated') {
             console.error(
-                'Your access token is invalid or expired. Log in again:'
+                'Your sign-in has expired and could not be renewed. ' + relogin
             )
-            loginUrl()
             process.exitCode = -1
         } else if (err.statusCode === 403) {
             console.error(
-                'Access denied -- your saved token may be read-only. Log in again for read-write access:'
+                'Access denied. If you signed in read-only (login -r), ' +
+                    relogin.replace('to sign in', 'for read-write access')
             )
-            loginUrl(false)
             process.exitCode = -1
         } else {
             process.exitCode = 1
