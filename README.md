@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/lionello-onedrive-cli-badge.png)](https://mseep.ai/app/lionello-onedrive-cli)
+
 # onedrive-cli
 
 Cross-platform command line interface for OneDrive (Personal)
