@@ -8,7 +8,7 @@ const globals = require('globals')
 module.exports = [
     js.configs.recommended,
     {
-        files: ['bin/onedrive'],
+        files: ['bin/onedrive', 'lib/**/*.js', 'test/**/*.js'],
         languageOptions: {
             ecmaVersion: 2022,
             sourceType: 'commonjs',

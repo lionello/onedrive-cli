@@ -1,6 +1,7 @@
 # onedrive-cli
 
-Cross-platform command line interface for OneDrive (Personal)
+Cross-platform command line interface for OneDrive: personal accounts, and
+work or school accounts (OneDrive for Business)
 
 ## Installation
 
@@ -32,15 +33,68 @@ bin/onedrive login
 Sign in once, then use the drive like a filesystem:
 
 ```sh
-onedrive login          # opens the Microsoft login page
+onedrive login          # opens the Microsoft sign-in page in your browser
 onedrive df             # check the connection and storage usage
 onedrive ls             # list your drive root
 ```
 
-`login` opens your browser, then stores the access token it gets back in
-`~/.onedrive-cli-token` (or `$XDG_STATE_HOME` if that is set). Tokens are valid
-for one hour, so run `login` again when a command reports that the token
-expired. Add `-r` for a read-only token.
+Personal Microsoft accounts and work or school accounts both work: the CLI
+talks to [Microsoft Graph](https://learn.microsoft.com/graph/onedrive-concept-overview),
+and with a work or school account `:/` is your OneDrive for Business.
+
+`login` saves the sign-in to `~/.onedrive-cli-token` (or `$XDG_STATE_HOME` if
+that is set), readable by you only. It renews itself, so you stay signed in
+until you run `onedrive logout`. Add `-r` for read-only access.
+
+## Signing in
+
+-   `onedrive login` - opens your browser, which hands the sign-in straight
+    back to the CLI.
+-   `onedrive login --device` - prints a short code to enter at
+    microsoft.com/devicelogin on any device: for SSH sessions, containers and
+    agents. Used automatically when there is no terminal.
+-   `onedrive login --tenant contoso.com` - accepts accounts of that
+    organization only (a domain or tenant ID). The default, `common`, accepts
+    any account.
+-   `onedrive login -r` - read-only access (`Files.Read.All` instead of
+    `Files.ReadWrite.All`).
+-   `onedrive logout` - deletes the saved sign-in.
+
+`login <access_token>` still saves a token obtained elsewhere. Such a token
+cannot be renewed and stops working after about an hour.
+
+### Your own app registration
+
+Some organizations only let their users sign in to apps an administrator has
+approved. Either ask an administrator to approve onedrive-cli, or register your
+own app (free, a few minutes):
+
+1. In the [Microsoft Entra admin center](https://entra.microsoft.com), open
+   **App registrations** and choose **New registration**. Pick the account
+   types you need.
+2. Under **Authentication**, add the platform **Mobile and desktop
+   applications** with the redirect URI `http://localhost`, and set **Allow
+   public client flows** to _Yes_ (needed for `--device`).
+3. Under **API permissions**, add the delegated Microsoft Graph permissions
+   `Files.ReadWrite.All` (or `Files.Read.All`) and `offline_access`.
+
+Then sign in with its _Application (client) ID_:
+
+```sh
+onedrive login --client-id 00000000-0000-0000-0000-000000000000 --tenant contoso.com
+```
+
+or set `ONEDRIVE_CLIENT_ID` (and `ONEDRIVE_TENANT`) in the environment. Both are
+saved with the sign-in, so renewals keep using them.
+
+### National clouds
+
+Point the CLI at the cloud's endpoints, e.g. for US Government:
+
+```sh
+export ONEDRIVE_AUTHORITY_HOST=https://login.microsoftonline.us
+export ONEDRIVE_GRAPH_URL=https://graph.microsoft.us/v1.0
+```
 
 ## Usage
 
@@ -54,11 +108,12 @@ Run `onedrive help` (or `-h`/`--help`) for this list at any time, and
 -   `chmod` - change sharing permissions
 -   `cp` - copies local file(s) to OneDrive or vice-versa
 -   `df` - shows OneDrive storage usage stats
--   `find` - find file(s) or folder(s) by name, optionally separated by `NUL`
+-   `find` - find file(s) or folder(s) by name, type, size, age or depth (`-maxdepth`, `-size`, `-mtime`, `-empty`, …), optionally separated by `NUL`
 -   `grep` - full-text search across the drive, listing matching paths
 -   `help` - shows list of supported commands
 -   `ln` - create a link to the remote item
--   `login` - request/store an OAuth access token
+-   `login` - sign in (browser, or `--device` for a code), see [Signing in](#signing-in)
+-   `logout` - delete the saved sign-in
 -   `ls` - list the contents of a folder
 -   `mcp` - run a read-only [MCP](https://modelcontextprotocol.io) server over stdio
 -   `mkdir` - create a remote folder
@@ -99,7 +154,8 @@ onedrive albums                # list all albums
 onedrive albums 'Summer 2026'  # list the photos in one album
 ```
 
-Albums are OneDrive [bundles](https://learn.microsoft.com/onedrive/developer/rest-api/api/drive_list_bundles):
+Albums are OneDrive [bundles](https://learn.microsoft.com/graph/api/drive-list-bundles),
+which exist on personal accounts only:
 they live outside the folder hierarchy and only reference the files, so
 `album rm` removes a photo from the album without deleting the file.
 Deleting an album itself is not supported by the API — use the OneDrive
@@ -109,9 +165,10 @@ web UI for that.
 
 `onedrive mcp` starts a read-only [Model Context Protocol](https://modelcontextprotocol.io)
 server over stdio, so an MCP client (Claude, etc.) can browse and read your
-OneDrive. It reuses the stored access token, so `login` first — ideally with
-`login -r` for a read-only token. The server only issues `GET` requests and
-cannot modify the drive. It exposes these tools:
+OneDrive. It reuses the saved sign-in, so `login` first — ideally with
+`login -r` for read-only access — or let the agent call `login_onedrive`. The
+server only issues `GET` requests and cannot modify the drive. It exposes these
+tools:
 
 -   `list_onedrive_folder` - list the direct children of a folder
 -   `search_onedrive_content` - full-text search across the whole drive
@@ -120,6 +177,8 @@ cannot modify the drive. It exposes these tools:
 -   `read_onedrive_file` - read a file's contents as text
 -   `stat_onedrive_item` - return full metadata for an item
 -   `onedrive_storage` - report storage quota for the available drives
+-   `login_onedrive` - sign in: a browser link, or with `device: true` a code
+    to enter on any device
 
 Register it with your MCP client, e.g. in `claude_desktop_config.json`:
 
@@ -136,15 +195,19 @@ Register it with your MCP client, e.g. in `claude_desktop_config.json`:
 
 ## FAQ
 
-##### Access token was not found; 'login' first.
+##### You're not logged in. Run 'onedrive login' to sign in.
 
-The `onedrive` utility needs an access token in order to read/write to your OneDrive storage.
-Run `onedrive login`: it opens the Microsoft login page, and after you sign in the
-[callback page](https://github.com/lionello/onedrive-cli/blob/master/docs/oauthcallbackhandler.html)
-hands the token straight back to the waiting command, which saves it to
-`~/.onedrive-cli-token`. If the browser runs on another machine (or the handover
-fails), the page shows the token so you can paste it at the prompt instead.
-Tokens are valid for 1 hour.
+The `onedrive` utility needs a sign-in to read/write your OneDrive. Run
+`onedrive login`: it opens the Microsoft sign-in page, and the browser hands the
+result straight back to the waiting command, which saves it to
+`~/.onedrive-cli-token`. If the browser runs on another machine, use
+`onedrive login --device` instead. See [Signing in](#signing-in).
+
+##### Your sign-in has expired and could not be renewed.
+
+The saved sign-in renews itself, but an organization can revoke it (e.g. after
+a password change), and a token from an older version of onedrive-cli, made for
+the retired OneDrive API, cannot be renewed at all. Run `onedrive login` again.
 
 ##### "An item with the same name already exists under the parent"
 
@@ -181,10 +244,10 @@ so this stays a pointer rather than a second source of truth:
 -   [#36](https://github.com/lionello/onedrive-cli/issues/36) — skip the transfer when the SHA1 already matches
 -   [#34](https://github.com/lionello/onedrive-cli/issues/34) — `chmod`: granting write access (`+w`)
 -   [#37](https://github.com/lionello/onedrive-cli/issues/37) — confirm the API honours gzip/deflate on downloads
--   [#4](https://github.com/lionello/onedrive-cli/issues/4), [#8](https://github.com/lionello/onedrive-cli/issues/8) — OneDrive for Business, via Microsoft Graph
 
 ## DONE
 
+-   Microsoft Graph, so work and school accounts work too, with a sign-in that renews itself ([#8](https://github.com/lionello/onedrive-cli/issues/8), [#4](https://github.com/lionello/onedrive-cli/issues/4))
 -   Read-only [MCP](https://modelcontextprotocol.io) server (`onedrive mcp`)
 -   Photo albums via bundles (`onedrive album`)
 -   Full-text search across the drive (`onedrive grep`)
@@ -199,6 +262,10 @@ so this stays a pointer rather than a second source of truth:
 <!-- readme-only:end -->
 
 ## Development
+
+`npm test` runs the tests, including the CLI end to end against a local mock of
+Microsoft Graph and the sign-in endpoints (`test/helpers/mock-graph.js`), so no
+account or network is needed. `npm run lint` and `npm run format` keep the style.
 
 A [Nix](https://nixos.org) flake provides the package and a dev shell with all
 dependencies. Run `nix develop` (or use [Direnv](https://direnv.net)'s `use flake`)
