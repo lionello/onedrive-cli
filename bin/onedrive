@@ -413,6 +413,54 @@ async function wget(args) {
     }
 }
 
+// Hash a file off disk instead of a Buffer, so this keeps working once
+// downloads stream (#100) and there is no whole-file Buffer left to hash.
+async function sha1File(path) {
+    const hash = Crypto.createHash('sha1')
+    const handle = await FS.open(path)
+    try {
+        for await (const chunk of handle.createReadStream()) {
+            hash.update(chunk)
+        }
+    } finally {
+        await handle.close()
+    }
+    return hash.digest('hex')
+}
+
+// Check what actually landed on disk against the item's own metadata, and
+// throw if it doesn't match, leaving the partial file behind for inspection.
+// Callers must await this before renaming the partial into place or deleting
+// the remote copy: "no exception was raised" is not evidence of a complete
+// transfer. Today getContent() buffers the whole body, so a truncated
+// response throws before anything is written -- but once downloads stream
+// (#100), a half-closed socket or a short read the server reported as success
+// ends the transfer with no error at all, and this is the only thing standing
+// between that and rmItem() deleting the last remaining copy.
+async function verifyDownload(from, partial, item) {
+    const expected = item && item.size
+    if (typeof expected === 'number') {
+        const actual = (await FS.stat(partial)).size
+        if (actual !== expected) {
+            throw Error(
+                `size mismatch: ${from} is ${expected} bytes, got ${actual}; kept ${partial}`
+            )
+        }
+    }
+    // Verify the hash when the item carries one, but never require it: the
+    // completion response of a resumable upload session (#33) comes back with
+    // no file.hashes at all, and OneDrive for Business reports quickXorHash
+    // rather than sha1Hash. Size is always present; treat the hash as a bonus.
+    const hashes = (item && item.file && item.file.hashes) || {}
+    const sha1 = hashes.sha1Hash
+    if (
+        sha1 &&
+        (await sha1File(partial)).toUpperCase() !== sha1.toUpperCase()
+    ) {
+        throw Error(`sha1Hash mismatch: ${from}; kept ${partial}`)
+    }
+}
+
 /*
 GET /drive/root:/{path and filename}:/content
 */
@@ -427,9 +475,19 @@ async function download(op, from, target) {
         target = target + Path.basename(from)
     }
     const remote = sanitize(from)
-    // TODO(#36): skip the GET when the local file's SHA1 already matches
+    // One extra GET per file -- `cp -R` now makes twice the requests -- but it
+    // is what gives us a size and a hash to check the transfer against before
+    // anything is renamed into place or, for MOVE, deleted upstream.
+    // TODO(#36): skip the content GET when the local file's SHA1 already
+    // matches item.file.hashes.sha1Hash.
+    const item = await getItem(from)
     const data = await getContent(remote + '/content')
-    await FS.writeFile(target, data)
+    // Land the bytes beside the target, never at it: a short transfer must not
+    // overwrite a good file, nor be left behind looking like a finished one.
+    const partial = target + '.partial'
+    await FS.writeFile(partial, data)
+    await verifyDownload(from, partial, item)
+    await FS.rename(partial, target)
     if (op === MOVE) {
         console.log(from, '=>', target)
         return rmItem(from)
