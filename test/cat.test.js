@@ -1,7 +1,7 @@
 'use strict'
 
 const assert = require('node:assert/strict')
-const { exec } = require('node:child_process')
+const { exec, spawn } = require('node:child_process')
 const Path = require('node:path')
 const { beforeEach, describe, test } = require('node:test')
 const { useCli } = require('./helpers/cli')
@@ -84,6 +84,70 @@ describe('cat (#70)', () => {
             ':/Documents/report one.txt'
         )
         assert.equal(stdout, "hello worldit's a report")
+    })
+})
+
+// Run the CLI with its stdout closed before it writes anything, as when the
+// reader at the end of a pipe has already gone away.
+function runWithStdoutClosed(...args) {
+    return new Promise(resolve => {
+        const child = spawn(process.execPath, [BIN, ...args], {
+            cwd: cli.cwd,
+            env: {
+                PATH: process.env.PATH,
+                XDG_STATE_HOME: cli.home,
+                ...cli.mock.env(),
+            },
+        })
+        child.stdout.destroy()
+        let stderr = ''
+        child.stderr.on('data', data => (stderr += data))
+        child.on('close', code => resolve({ code, stderr }))
+    })
+}
+
+describe('a reader that goes away', () => {
+    test('cat stops quietly and fetches no more files', async () => {
+        bigFile()
+        const { code, stdout, stderr } = await pipeline(
+            'cat :/big.bin :/hello.txt | head -c 10'
+        )
+        assert.equal(code, 0)
+        assert.equal(stdout.length, 10)
+        assert.doesNotMatch(stderr.toString(), /EPIPE|Error|at /)
+        assert.ok(
+            !cli.mock.requests.some(r => r.includes('hello.txt')),
+            'the second file was not downloaded'
+        )
+    })
+
+    test('rm still removes every item', async () => {
+        cli.mock.addFile('a.txt', 'a').addFile('b.txt', 'b')
+        const { code, stderr } = await runWithStdoutClosed(
+            'rm',
+            ':/a.txt',
+            ':/hello.txt',
+            ':/b.txt'
+        )
+        assert.equal(code, 0)
+        assert.equal(stderr, '')
+        for (const name of ['a.txt', 'hello.txt', 'b.txt']) {
+            assert.ok(!cli.mock.items.has(name), name + ' was removed')
+        }
+    })
+
+    test('rm that fails still exits non-zero', async () => {
+        cli.mock.addFile('a.txt', 'a').addFile('b.txt', 'b')
+        const { code, stderr } = await runWithStdoutClosed(
+            'rm',
+            ':/a.txt',
+            ':/missing.txt',
+            ':/b.txt'
+        )
+        assert.notEqual(code, 0)
+        assert.match(stderr, /not found/i)
+        assert.ok(!cli.mock.items.has('a.txt'), 'a.txt was removed')
+        assert.ok(cli.mock.items.has('b.txt'), 'rm stopped at the failure')
     })
 })
 
