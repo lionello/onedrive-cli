@@ -223,38 +223,84 @@ async function getContent(url) {
     return data.buffer()
 }
 
-// Download only [offset, offset+length) of a file via an HTTP Range request,
-// so large files never come down whole. Returns the bytes plus the total size
-// parsed from Content-Range (undefined if the server didn't report it).
-async function getRange(url, offset, length) {
+// Ask for [offset, offset+length) of a file with an HTTP Range request. The
+// body is left unread, so the caller takes only as much as it needs and calls
+// resp.abort() to drop the rest. A 200 means the server ignored the Range and
+// is sending the whole file.
+async function openRange(url, offset, length) {
+    const controller = new AbortController()
     const resp = await send(url, {
         // Byte ranges are only meaningful on the identity representation, so
         // don't let node-fetch negotiate/inflate gzip (partial gzip won't
         // decode, and offsets wouldn't line up with the file's bytes).
         compress: false,
+        signal: controller.signal,
         headers: {
             Range: 'bytes=' + offset + '-' + (offset + length - 1),
         },
     })
+    resp.abort = () => {
+        // node-fetch reports the abort as an 'error' on the body.
+        resp.body.on('error', () => {})
+        controller.abort()
+    }
+    if (resp.status !== 416) {
+        await checkResponse(resp)
+    }
+    return resp
+}
+
+// The bytes [offset, offset+length) of a whole-file body, read as it streams
+// in. Stops downloading once past the end of the window (or when the consumer
+// stops), so neither memory nor bandwidth goes beyond what is needed.
+async function* sliceBody(resp, offset, length) {
+    const end = offset + length
+    let position = 0
+    try {
+        for await (const chunk of resp.body) {
+            const from = Math.max(offset - position, 0)
+            const to = Math.min(end - position, chunk.length)
+            position += chunk.length
+            if (from < to) {
+                yield chunk.subarray(from, to)
+            }
+            if (position >= end) {
+                break
+            }
+        }
+    } finally {
+        resp.abort()
+    }
+}
+
+// Download only [offset, offset+length) of a file via an HTTP Range request,
+// so large files never come down whole. Returns the bytes plus the total size
+// parsed from Content-Range (undefined if the server didn't report it).
+async function getRange(url, offset, length) {
+    const resp = await openRange(url, offset, length)
     const total = (cr => {
         const m = cr && /\/\s*(\d+)\s*$/.exec(cr)
         return m ? Number(m[1]) : undefined
     })(resp.headers.get('content-range'))
     // Range past EOF: report an empty tail instead of throwing.
     if (resp.status === 416) {
+        resp.abort()
         return { buffer: Buffer.alloc(0), total }
     }
-    await checkResponse(resp)
-    let buffer = await resp.buffer()
     if (resp.status === 200) {
-        // Server ignored the Range and sent the whole file; slice locally so
-        // the result is still correct (no bandwidth win in this fallback).
+        // Server ignored the Range and is sending the whole file: keep only
+        // the window, and stop reading once past it.
+        const chunks = []
+        for await (const chunk of sliceBody(resp, offset, length)) {
+            chunks.push(chunk)
+        }
+        const size = resp.headers.get('content-length')
         return {
-            buffer: buffer.subarray(offset, offset + length),
-            total: buffer.length,
+            buffer: Buffer.concat(chunks),
+            total: size !== null ? Number(size) : undefined,
         }
     }
-    return { buffer, total }
+    return { buffer: await resp.buffer(), total }
 }
 
 function sanitize(remote) {
@@ -724,9 +770,100 @@ async function cat(args) {
 }
 
 // head and tail read a file in chunks through HTTP Range requests, so only
-// the part that is printed (plus at most one chunk) comes down.
+// the part that is printed (plus at most one chunk) comes down, and they
+// print as they go, so memory stays bounded whatever the file or line length.
 const RANGE_CHUNK = 64 * 1024
 const NEWLINE = 0x0a
+// tail keeps at most this much of what its backwards scan read; a longer tail
+// is downloaded a second time, streamed forwards from where the scan found it
+// starts.
+const TAIL_BUFFER = 1024 * 1024
+
+// Write to stdout, waiting for it to drain when it is backed up, so a slow
+// reader holds us back instead of the output piling up in memory.
+async function write(data) {
+    if (!process.stdout.write(data)) {
+        await new Promise(resolve => process.stdout.once('drain', resolve))
+    }
+}
+
+// Reads a remote file at any offset through ranged requests of at most
+// RANGE_CHUNK bytes. Should the server ignore Range and answer 200 with the
+// whole file, that one response is used rather than asking again for every
+// chunk: stream() takes what it needs from it as it arrives, and read()
+// spools it to a temporary file once and serves every later read from there.
+class RangeReader {
+    constructor(url) {
+        this.url = url
+    }
+
+    // One ranged request; a 200 comes back unread as { whole }.
+    async request(offset, length) {
+        const resp = await openRange(this.url, offset, length)
+        if (resp.status === 200) {
+            return { whole: resp }
+        }
+        if (resp.status === 416) {
+            resp.abort()
+            return { buffer: Buffer.alloc(0) }
+        }
+        return { buffer: await resp.buffer() }
+    }
+
+    async read(offset, length) {
+        if (!this.spool) {
+            const { buffer, whole } = await this.request(offset, length)
+            if (!whole) {
+                return buffer
+            }
+            await this.spoolBody(whole)
+        }
+        const buffer = Buffer.alloc(length)
+        const { bytesRead } = await this.spool.read(buffer, 0, length, offset)
+        return buffer.subarray(0, bytesRead)
+    }
+
+    // The bytes from offset up to end (default: the end of the file), chunk
+    // by chunk. Breaking out of the loop stops the download.
+    async *stream(offset, end = Infinity) {
+        while (offset < end) {
+            const length = Math.min(RANGE_CHUNK, end - offset)
+            const { buffer, whole } = this.spool
+                ? { buffer: await this.read(offset, length) }
+                : await this.request(offset, length)
+            if (whole) {
+                yield* sliceBody(whole, offset, end - offset)
+                return
+            }
+            if (buffer.length > 0) {
+                yield buffer
+            }
+            if (buffer.length < length) {
+                return
+            }
+            offset += length
+        }
+    }
+
+    async spoolBody(resp) {
+        const { pipeline } = require('stream/promises')
+        this.dir = await FS.mkdtemp(
+            Path.join(require('os').tmpdir(), 'onedrive-cli-')
+        )
+        const path = Path.join(this.dir, 'spool')
+        await pipeline(resp.body, require('fs').createWriteStream(path))
+        this.spool = await FS.open(path)
+    }
+
+    async close() {
+        if (this.spool) {
+            await this.spool.close()
+        }
+        if (this.dir) {
+            await FS.rm(this.dir, { recursive: true, force: true })
+        }
+    }
+}
 
 // -c BYTES, -n LINES (also -cBYTES / -nLINES); the default is -n 10.
 function parseHeadTailArgs(args) {
@@ -754,31 +891,27 @@ function parseHeadTailArgs(args) {
 }
 
 async function head1(remote, options) {
-    const url = sanitize(remote) + '/content'
+    const reader = new RangeReader(sanitize(remote) + '/content')
     if (options.bytes !== undefined) {
-        if (options.bytes > 0) {
-            print((await getRange(url, 0, options.bytes)).buffer)
+        for await (const chunk of reader.stream(0, options.bytes)) {
+            await write(chunk)
         }
         return
     }
-    const chunks = []
+    if (options.lines === 0) {
+        return
+    }
     let newlines = 0
-    for (let offset = 0; options.lines > 0; ) {
-        const { buffer, total } = await getRange(url, offset, RANGE_CHUNK)
-        const end = buffer.findIndex(
+    for await (const chunk of reader.stream(0)) {
+        const end = chunk.findIndex(
             byte => byte === NEWLINE && ++newlines === options.lines
         )
         if (end >= 0) {
-            chunks.push(buffer.subarray(0, end + 1))
+            await write(chunk.subarray(0, end + 1))
             break
         }
-        chunks.push(buffer)
-        offset += buffer.length
-        if (buffer.length < RANGE_CHUNK || (total && offset >= total)) {
-            break
-        }
+        await write(chunk)
     }
-    print(Buffer.concat(chunks))
 }
 
 async function tail1(remote, options) {
@@ -786,40 +919,57 @@ async function tail1(remote, options) {
     if (item.folder) {
         throw Error(remote + ': Is a directory')
     }
-    const url = sanitize(remote) + '/content'
     const size = item.size
-    if (options.bytes !== undefined) {
-        const length = Math.min(options.bytes, size)
-        if (length > 0) {
-            print((await getRange(url, size - length, length)).buffer)
+    const reader = new RangeReader(sanitize(remote) + '/content')
+    try {
+        if (options.bytes !== undefined) {
+            const from = size - Math.min(options.bytes, size)
+            for await (const chunk of reader.stream(from, size)) {
+                await write(chunk)
+            }
+            return
         }
-        return
-    }
-    if (options.lines === 0 || size === 0) {
-        return
-    }
-    // Walk back from the end. A newline in the very last byte ends the last
-    // line rather than starting a new one, so it isn't counted.
-    const chunks = []
-    let start
-    let newlines = 0
-    for (let end = size; end > 0 && start === undefined; ) {
-        const from = Math.max(0, end - RANGE_CHUNK)
-        const { buffer } = await getRange(url, from, end - from)
-        for (let i = buffer.length - 1; i >= 0; i--) {
-            if (
-                buffer[i] === NEWLINE &&
-                from + i !== size - 1 &&
-                ++newlines === options.lines
-            ) {
-                start = i + 1
-                break
+        if (options.lines === 0 || size === 0) {
+            return
+        }
+        // Walk back from the end. A newline in the very last byte ends the
+        // last line rather than starting a new one, so it isn't counted. What
+        // the walk read is kept for printing only while it is small.
+        let start = size
+        let kept = []
+        let keptBytes = 0
+        let newlines = 0
+        for (let found = false; start > 0 && !found; ) {
+            const from = Math.max(0, start - RANGE_CHUNK)
+            const buffer = await reader.read(from, start - from)
+            let i = buffer.length - 1
+            for (; i >= 0; i--) {
+                if (
+                    buffer[i] === NEWLINE &&
+                    from + i !== size - 1 &&
+                    ++newlines === options.lines
+                ) {
+                    found = true
+                    break
+                }
+            }
+            const part = buffer.subarray(i + 1)
+            keptBytes += part.length
+            kept = kept && keptBytes <= TAIL_BUFFER ? [part, ...kept] : null
+            start = from + i + 1
+        }
+        if (kept) {
+            for (const chunk of kept) {
+                await write(chunk)
+            }
+        } else {
+            for await (const chunk of reader.stream(start, size)) {
+                await write(chunk)
             }
         }
-        chunks.unshift(start === undefined ? buffer : buffer.subarray(start))
-        end = from
+    } finally {
+        await reader.close()
     }
-    print(Buffer.concat(chunks))
 }
 
 async function headTail(name, read, args) {
