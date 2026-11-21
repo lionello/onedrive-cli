@@ -505,6 +505,83 @@ async function wget(args) {
     }
 }
 
+function statIfExists(path) {
+    return FS.stat(path).catch(err => {
+        if (err.code === 'ENOENT') {
+            return undefined
+        }
+        throw err
+    })
+}
+
+// -i: ask before replacing a local file. The Stats of the file asked about if
+// the answer is yes, false if no, undefined if there is no file to replace.
+async function askToReplace(path) {
+    const stats = await statIfExists(path)
+    if (stats === undefined) {
+        return undefined
+    }
+    return (await confirm('overwrite ' + path + '?')) && stats
+}
+
+const sameFile = (a, b) =>
+    a.dev === b.dev &&
+    a.ino === b.ino &&
+    a.size === b.size &&
+    a.mtimeMs === b.mtimeMs
+
+// Save a download under -n or -i without replacing a file nobody agreed to
+// replace, even one that appeared or changed while the download ran. The bytes
+// are already in memory, so a partial download never reaches the target:
+// - no file was agreed to: create the target exclusively ('wx'). If it exists
+//   by now, -n skips it and -i asks about it.
+// - the user agreed to replace a file: open it without creating or truncating
+//   it, and truncate only if the open file is still the one agreed to (same
+//   device, inode, size and mtime). Otherwise ask again; if it is gone,
+//   create it as above.
+// Returns false if the target was left alone.
+async function writeNoClobber(target, data, overwrite, agreed) {
+    for (;;) {
+        if (agreed === undefined) {
+            try {
+                await FS.writeFile(target, data, { flag: 'wx' })
+                return true
+            } catch (err) {
+                if (err.code !== 'EEXIST') {
+                    throw err
+                }
+            }
+            if (overwrite === SKIP) {
+                return false
+            }
+        } else {
+            let file
+            try {
+                file = await FS.open(target, require('fs').constants.O_WRONLY)
+            } catch (err) {
+                if (err.code !== 'ENOENT') {
+                    throw err
+                }
+                agreed = undefined
+                continue
+            }
+            try {
+                if (sameFile(await file.stat(), agreed)) {
+                    await file.truncate(0)
+                    await file.writeFile(data)
+                    return true
+                }
+            } finally {
+                await file.close()
+            }
+        }
+        agreed = await askToReplace(target)
+        if (agreed === false) {
+            return false
+        }
+    }
+}
+
 /*
 GET /me/drive/root:/{path and filename}:/content
 */
@@ -519,22 +596,27 @@ async function download(op, from, target, options = {}) {
         target = target + Path.basename(from)
     }
     const remote = sanitize(from)
-    if (options.overwrite === SKIP || options.overwrite === ASK) {
-        const exists = await FS.stat(target).then(
-            () => true,
-            () => false
-        )
-        if (
-            exists &&
-            (options.overwrite === SKIP ||
-                !(await confirm('overwrite ' + target + '?')))
-        ) {
-            return console.log(from, '--', target, '(exists, skipped)')
+    const skipped = () => console.log(from, '--', target, '(exists, skipped)')
+    // -i: the local file the user agreed to replace, if there was one.
+    let agreed
+    if (options.overwrite === SKIP && (await statIfExists(target))) {
+        return skipped()
+    }
+    if (options.overwrite === ASK) {
+        agreed = await askToReplace(target)
+        if (agreed === false) {
+            return skipped()
         }
     }
     // TODO(#36): skip the GET when the local file's SHA1 already matches
     const data = await getContent(remote + '/content')
-    await FS.writeFile(target, data)
+    if (options.overwrite === SKIP || options.overwrite === ASK) {
+        if (!(await writeNoClobber(target, data, options.overwrite, agreed))) {
+            return skipped()
+        }
+    } else {
+        await FS.writeFile(target, data)
+    }
     if (op === MOVE) {
         console.log(from, '=>', target)
         return rmItem(from)
@@ -553,8 +635,9 @@ Content-type: application/json
   },
   "name": "new-item-name.txt"
 }
+@microsoft.graph.conflictBehavior   fail (def) or replace.
 */
-async function moveItem(item, path, name) {
+async function moveItem(item, path, name, conflictBehavior) {
     // Graph moves by parent id. Resolving it also avoids putting a URL-escaped
     // path into the JSON body (#71).
     const parent = await call(sanitize(path))
@@ -562,10 +645,16 @@ async function moveItem(item, path, name) {
         name: name,
         parentReference: { id: parent.id },
     }
-    return call(sanitize(item), 'PATCH', data)
+    const query = conflictBehavior
+        ? '?@microsoft.graph.conflictBehavior=' + conflictBehavior
+        : ''
+    return call(sanitize(item) + query, 'PATCH', data)
 }
 
-async function rename(from, target) {
+// Graph checks for an existing target in the same request as the move, so -n
+// and -i need no separate existence check: -n asks Graph to fail and skips on
+// the conflict; -i does the same, asks, and moves again with replace.
+async function rename(from, target, options = {}) {
     if (from.endsWith('/')) {
         throw Error('Invalid source name')
     }
@@ -574,7 +663,23 @@ async function rename(from, target) {
     }
     const parent = Path.dirname(target)
     const name = Path.basename(target)
-    await moveItem(from, parent, name)
+    const behavior = { [REPLACE]: 'replace', [ASK]: 'fail', [SKIP]: 'fail' }[
+        options.overwrite
+    ]
+    try {
+        await moveItem(from, parent, name, behavior)
+    } catch (err) {
+        if (err.code !== 'nameAlreadyExists' || behavior !== 'fail') {
+            throw err
+        }
+        if (
+            options.overwrite === SKIP ||
+            !(await confirm('overwrite ' + target + '?'))
+        ) {
+            return console.log(from, '--', target, '(exists, skipped)')
+        }
+        await moveItem(from, parent, name, 'replace')
+    }
     console.log(`renamed '${from}' -> '${target}'`)
 }
 
@@ -597,7 +702,7 @@ async function cp_mv(op, args, target, options = {}) {
         }
         // from onedrive to onedrive
         for (const cur of args) {
-            await rename(cur, target)
+            await rename(cur, target, options)
         }
     } else if (args[0].startsWith('./') || target.startsWith(':/')) {
         // from local to onedrive
@@ -641,7 +746,8 @@ function is_folder(info) {
 }
 
 // What to do when the target exists: the last of -f, -i or -n wins, as in
-// cp(1). Without any, uploads refuse to overwrite and downloads overwrite.
+// cp(1). Without any, uploads and remote moves refuse to overwrite and
+// downloads overwrite.
 const REPLACE = 'replace' // -f
 const ASK = 'ask' // -i
 const SKIP = 'skip' // -n
@@ -667,18 +773,48 @@ function parseCopyOptions(args, allowed) {
     return options
 }
 
-// Ask on the terminal (or read the answer from stdin); yes starts with y.
+// Ask on the terminal (or read the answer from stdin); yes starts with y, and
+// no answer (end of input) is no. One reader serves every question of a run,
+// so answers piped in for several questions are not lost in between. Stdin
+// keeps the process alive only while a question waits for its answer.
+let nextAnswer
 function confirm(question) {
-    const readline = require('readline').createInterface({
-        input: process.stdin,
-        output: process.stderr,
-    })
-    return new Promise(resolve =>
-        readline.question(question + ' (y/n [n]) ', answer => {
-            readline.close()
-            resolve(/^y/i.test(answer.trim()))
+    if (!nextAnswer) {
+        const input = process.stdin
+        const reader = require('readline').createInterface({ input })
+        const lines = []
+        let waiting = null
+        let ended = false
+        const hold = on => {
+            if (!ended && typeof input.ref === 'function') {
+                on ? input.ref() : input.unref()
+            }
+        }
+        const answer = () => {
+            if (waiting && (lines.length > 0 || ended)) {
+                const resolve = waiting
+                waiting = null
+                hold(false)
+                resolve(lines.length > 0 ? lines.shift() : '')
+            }
+        }
+        reader.on('line', line => {
+            lines.push(line)
+            answer()
         })
-    )
+        reader.on('close', () => {
+            ended = true
+            answer()
+        })
+        nextAnswer = () =>
+            new Promise(resolve => {
+                waiting = resolve
+                hold(true)
+                answer()
+            })
+    }
+    process.stderr.write(question + ' (y/n [n]) ')
+    return nextAnswer().then(answer => /^y/i.test(answer.trim()))
 }
 
 async function cp(args) {

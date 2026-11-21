@@ -112,6 +112,120 @@ describe('cp/mv overwrite options (#22)', () => {
         assert.equal(remote('t.txt'), 't')
     })
 
+    test('-n keeps a local file created while the download runs', async () => {
+        cli.mock.beforeDownload = () =>
+            FS.writeFileSync(cli.local('hello.txt'), 'theirs')
+        const { code, stdout } = await cli.run('cp', '-n', ':/hello.txt', './')
+        assert.equal(code, 0)
+        assert.match(stdout, /exists, skipped/)
+        assert.equal(local('hello.txt'), 'theirs')
+    })
+
+    test('mv -n keeps the remote file when the local one appears', async () => {
+        cli.mock.beforeDownload = () =>
+            FS.writeFileSync(cli.local('hello.txt'), 'theirs')
+        const { code } = await cli.run('mv', '-n', ':/hello.txt', './')
+        assert.equal(code, 0)
+        assert.equal(local('hello.txt'), 'theirs')
+        assert.equal(remote('hello.txt'), 'hello world')
+    })
+
+    test('-i asks about a local file created while the download runs', async () => {
+        cli.mock.beforeDownload = () =>
+            FS.writeFileSync(cli.local('hello.txt'), 'theirs')
+        let result = await runWithInput('n\n', 'cp', '-i', ':/hello.txt', './')
+        assert.equal(result.code, 0)
+        assert.match(result.stderr, /overwrite .*hello\.txt/)
+        assert.equal(local('hello.txt'), 'theirs')
+        FS.unlinkSync(cli.local('hello.txt'))
+        result = await runWithInput('y\n', 'cp', '-i', ':/hello.txt', './')
+        assert.equal(result.code, 0)
+        assert.equal(local('hello.txt'), 'hello world')
+    })
+
+    test('-i asks again if the agreed file changes during the download', async () => {
+        FS.writeFileSync(cli.local('hello.txt'), 'mine')
+        cli.mock.beforeDownload = () =>
+            FS.writeFileSync(cli.local('hello.txt'), 'changed meanwhile')
+        // Only the first question gets a yes; the second one reads no answer.
+        const result = await runWithInput(
+            'y\n',
+            'cp',
+            '-i',
+            ':/hello.txt',
+            './'
+        )
+        assert.equal(result.code, 0)
+        assert.equal(result.stderr.match(/overwrite \S*hello\.txt/g).length, 2)
+        assert.equal(local('hello.txt'), 'changed meanwhile')
+    })
+
+    test('remote mv refuses an existing target by default', async () => {
+        const { code, stderr } = await cli.run(
+            'mv',
+            ':/hello.txt',
+            ':/Documents/report one.txt'
+        )
+        assert.equal(code, 1)
+        assert.match(stderr, /already exists/)
+        assert.equal(remote('Documents/report one.txt'), "it's a report")
+        assert.equal(remote('hello.txt'), 'hello world')
+    })
+
+    test('remote mv -n keeps the target, -f replaces it', async () => {
+        let result = await cli.run(
+            'mv',
+            '-n',
+            ':/hello.txt',
+            ':/Documents/report one.txt'
+        )
+        assert.equal(result.code, 0)
+        assert.match(result.stdout, /exists, skipped/)
+        assert.equal(remote('Documents/report one.txt'), "it's a report")
+        assert.equal(remote('hello.txt'), 'hello world')
+        result = await cli.run(
+            'mv',
+            '-f',
+            ':/hello.txt',
+            ':/Documents/report one.txt'
+        )
+        assert.equal(result.code, 0)
+        assert.equal(remote('Documents/report one.txt'), 'hello world')
+        assert.ok(!cli.mock.items.has('hello.txt'))
+    })
+
+    test('remote mv -i asks, and only "y" replaces', async () => {
+        const target = ':/Documents/report one.txt'
+        let result = await runWithInput(
+            'n\n',
+            'mv',
+            '-i',
+            ':/hello.txt',
+            target
+        )
+        assert.equal(result.code, 0)
+        assert.match(result.stderr, /overwrite .*report one\.txt/)
+        assert.equal(remote('Documents/report one.txt'), "it's a report")
+        assert.equal(remote('hello.txt'), 'hello world')
+        result = await runWithInput('y\n', 'mv', '-i', ':/hello.txt', target)
+        assert.equal(result.code, 0)
+        assert.equal(remote('Documents/report one.txt'), 'hello world')
+        assert.ok(!cli.mock.items.has('hello.txt'))
+    })
+
+    test('remote mv -i does not ask when the target is free', async () => {
+        const result = await runWithInput(
+            '',
+            'mv',
+            '-i',
+            ':/hello.txt',
+            ':/Documents/'
+        )
+        assert.equal(result.code, 0)
+        assert.doesNotMatch(result.stderr, /overwrite/)
+        assert.equal(remote('Documents/hello.txt'), 'hello world')
+    })
+
     test('an unknown option is an error', async () => {
         const { code, stderr } = await cli.run('cp', '-x', 'a', 'b')
         assert.equal(code, 1)

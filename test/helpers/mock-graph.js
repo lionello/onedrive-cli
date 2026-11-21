@@ -26,6 +26,9 @@ class MockGraph {
         this.requests = [] // "METHOD /path" of every request, for assertions
         this.tokenRequests = [] // grant_type of every token request
         this.corruptUploadHash = false
+        // Awaited before a download URL answers, so a test can act while the
+        // CLI waits for the content.
+        this.beforeDownload = null
         this.nextId = 1
         this.items = new Map() // path ('' = root) -> item
         this.content = new Map() // path -> Buffer
@@ -163,6 +166,9 @@ class MockGraph {
                 return this.identity(url, body, json)
             }
             if (url.pathname.startsWith('/download/')) {
+                if (this.beforeDownload) {
+                    await this.beforeDownload()
+                }
                 return this.download(req, res, url)
             }
             if (url.pathname.startsWith('/v1.0/')) {
@@ -283,7 +289,7 @@ class MockGraph {
         }
         const byId = /^\/v1\.0\/me\/drive\/items\/([^/]+)$/.exec(url.pathname)
         if (byId && req.method === 'PATCH') {
-            return this.move(byId[1], JSON.parse(body.toString()), json)
+            return this.move(byId[1], JSON.parse(body.toString()), url, json)
         }
         const target = this.resolve(url.pathname)
         if (!target) {
@@ -302,6 +308,7 @@ class MockGraph {
             return this.move(
                 this.items.get(path).id,
                 JSON.parse(body.toString()),
+                url,
                 json
             )
         }
@@ -370,7 +377,9 @@ class MockGraph {
         notFound()
     }
 
-    move(id, patch, json) {
+    // Like Graph, a move onto an existing name fails unless the request says
+    // @microsoft.graph.conflictBehavior=replace.
+    move(id, patch, url, json) {
         const from = [...this.items.keys()].find(
             p => this.items.get(p).id === id
         )
@@ -383,6 +392,26 @@ class MockGraph {
             })
         }
         const to = (parent ? parent + '/' : '') + patch.name
+        if (to !== from && this.items.has(to)) {
+            if (
+                url.searchParams.get('@microsoft.graph.conflictBehavior') !==
+                'replace'
+            ) {
+                return json(409, {
+                    error: {
+                        code: 'nameAlreadyExists',
+                        message:
+                            'An item with the same name already exists under the parent',
+                    },
+                })
+            }
+            for (const p of [...this.items.keys()]) {
+                if (p === to || p.startsWith(to + '/')) {
+                    this.items.delete(p)
+                    this.content.delete(p)
+                }
+            }
+        }
         this.items.set(to, this.items.get(from))
         this.items.delete(from)
         if (this.content.has(from)) {
