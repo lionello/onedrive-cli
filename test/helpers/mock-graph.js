@@ -32,6 +32,9 @@ class MockGraph {
         this.uploadChunks = [] // { start, length } of every accepted chunk
         this.failChunkPuts = 0 // answer the next N chunks with 500, unstored
         this.dropChunkResponses = 0 // store the next N chunks, then answer 500
+        this.loseFinalChunkResponse = 0 // finish the next N sessions, then
+        // close the connection without an answer
+        this.onFinalChunk = null // called with the path before a commit
         this.nextId = 1
         this.items = new Map() // path ('' = root) -> item
         this.content = new Map() // path -> Buffer
@@ -64,9 +67,13 @@ class MockGraph {
         return this
     }
 
-    addFile(path, data) {
+    addFile(path, data, modified) {
         const buffer = Buffer.from(data)
-        this.items.set(path, { id: 'item' + this.nextId++, folder: false })
+        this.items.set(path, {
+            id: 'item' + this.nextId++,
+            folder: false,
+            modified,
+        })
         this.content.set(path, buffer)
         return this
     }
@@ -90,7 +97,7 @@ class MockGraph {
         const result = {
             id: entry.id,
             name,
-            lastModifiedDateTime: '2026-01-02T03:04:05Z',
+            lastModifiedDateTime: entry.modified || '2026-01-02T03:04:05Z',
             createdBy: { user: { displayName: 'Test User' } },
         }
         if (path !== '') {
@@ -476,8 +483,28 @@ class MockGraph {
             return json(202, expected())
         }
         this.sessions.delete(id)
-        this.addFile(session.path, session.data)
-        return json(201, this.item(session.path))
+        if (this.onFinalChunk) {
+            this.onFinalChunk(session.path)
+        }
+        const lost = this.loseFinalChunkResponse > 0
+        if (lost) {
+            this.loseFinalChunkResponse--
+        }
+        // Like Graph with conflictBehavior=fail: an item that appeared since
+        // the session started is not overwritten.
+        if (this.items.has(session.path)) {
+            return lost
+                ? res.destroy()
+                : json(409, {
+                      error: {
+                          code: 'nameAlreadyExists',
+                          message:
+                              'An item with the same name already exists under the parent',
+                      },
+                  })
+        }
+        this.addFile(session.path, session.data, new Date().toISOString())
+        return lost ? res.destroy() : json(201, this.item(session.path))
     }
 
     move(id, patch, json) {

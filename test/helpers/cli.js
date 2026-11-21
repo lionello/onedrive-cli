@@ -83,6 +83,10 @@ function useCli() {
             }
         }
         mock.corruptUploadHash = false
+        mock.failChunkPuts = 0
+        mock.dropChunkResponses = 0
+        mock.loseFinalChunkResponse = 0
+        mock.onFinalChunk = null
         await ctx.signIn()
     })
 
