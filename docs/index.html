@@ -493,6 +493,7 @@ expired. Add <code>-r</code> for a read-only token.</p>
 <li>  <code>mcp</code> - run a read-only <a href="https://modelcontextprotocol.io">MCP</a> server over stdio</li>
 <li>  <code>mkdir</code> - create a remote folder</li>
 <li>  <code>mv</code> - move a local file to OneDrive or vice-versa</li>
+<li>  <code>realpath</code> - print the View Online URL of a remote or locally synced file</li>
 <li>  <code>rm</code> - delete a file or folder from OneDrive</li>
 <li>  <code>sendmail</code> - send an invitation email for editing to recipients</li>
 <li>  <code>stat</code> - dump all information for particular file(s)</li>
@@ -520,6 +521,19 @@ expired. Add <code>-r</code> for a read-only token.</p>
 <h5>Move remote files to a new folder</h5>
 
 <p><code>onedrive find &#39;Pictures/Camera Roll&#39; -regex 2015 -type f -print0 | xargs -0 onedrive mv -t :/Pictures/2015/</code></p>
+
+<h5>Get the web address of a file</h5>
+
+<p><code>realpath</code> prints the item&#39;s own <em>View Online</em> URL, which exists whether or not
+the file has ever been shared. It accepts a remote path, or a local path inside
+the folder the OneDrive sync client mirrors:</p>
+
+<pre><code class="sh">onedrive realpath Documents/report.docx
+onedrive realpath ~/OneDrive/Documents/report.docx
+</code></pre>
+
+<p>To hand someone else access instead, use <code>ln</code>: that creates a new sharing
+permission and prints <em>its</em> link, which <code>chmod</code> can later downgrade or revoke.</p>
 
 <h5>Create an album and add photos to it</h5>
 

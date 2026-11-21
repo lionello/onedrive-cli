@@ -63,6 +63,7 @@ Run `onedrive help` (or `-h`/`--help`) for this list at any time, and
 -   `mcp` - run a read-only [MCP](https://modelcontextprotocol.io) server over stdio
 -   `mkdir` - create a remote folder
 -   `mv` - move a local file to OneDrive or vice-versa
+-   `realpath` - print the View Online URL of a remote or locally synced file
 -   `rm` - delete a file or folder from OneDrive
 -   `sendmail` - send an invitation email for editing to recipients
 -   `stat` - dump all information for particular file(s)
@@ -89,6 +90,20 @@ Run `onedrive help` (or `-h`/`--help`) for this list at any time, and
 ##### Move remote files to a new folder
 
 `onedrive find 'Pictures/Camera Roll' -regex 2015 -type f -print0 | xargs -0 onedrive mv -t :/Pictures/2015/`
+
+##### Get the web address of a file
+
+`realpath` prints the item's own _View Online_ URL, which exists whether or not
+the file has ever been shared. It accepts a remote path, or a local path inside
+the folder the OneDrive sync client mirrors:
+
+```sh
+onedrive realpath Documents/report.docx
+onedrive realpath ~/OneDrive/Documents/report.docx
+```
+
+To hand someone else access instead, use `ln`: that creates a new sharing
+permission and prints _its_ link, which `chmod` can later downgrade or revoke.
 
 ##### Create an album and add photos to it
 
@@ -185,6 +200,7 @@ so this stays a pointer rather than a second source of truth:
 
 ## DONE
 
+-   Print the View Online URL of a file (`onedrive realpath`)
 -   Read-only [MCP](https://modelcontextprotocol.io) server (`onedrive mcp`)
 -   Photo albums via bundles (`onedrive album`)
 -   Full-text search across the drive (`onedrive grep`)
