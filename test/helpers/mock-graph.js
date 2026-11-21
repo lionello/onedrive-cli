@@ -26,11 +26,31 @@ class MockGraph {
         this.deviceError = null // a sign-in error to answer once pending ends
         this.requests = [] // "METHOD /path" of every request, for assertions
         this.tokenRequests = [] // grant_type of every token request
+        this.refreshGate = null // while set, refresh answers wait for it
         this.corruptUploadHash = false
         this.nextId = 1
         this.items = new Map() // path ('' = root) -> item
         this.content = new Map() // path -> Buffer
         this.addFolder('')
+    }
+
+    // Holds refresh answers until release() is called. `arrived` resolves when
+    // a refresh request is waiting, i.e. while the client is mid-renewal.
+    holdRefreshes() {
+        let release, arrived
+        const gate = {
+            open: new Promise(resolve => (release = resolve)),
+            arrived: () => arrived(),
+        }
+        const waiting = new Promise(resolve => (arrived = resolve))
+        this.refreshGate = gate
+        return {
+            arrived: waiting,
+            release: () => {
+                this.refreshGate = null
+                release()
+            },
+        }
     }
 
     // --- drive contents --------------------------------------------------
@@ -200,14 +220,21 @@ class MockGraph {
         const grant = form.get('grant_type')
         this.tokenRequests.push(grant)
         if (grant === 'refresh_token') {
-            if (!this.refreshTokens.delete(form.get('refresh_token'))) {
-                return json(400, {
-                    error: 'invalid_grant',
-                    error_description:
-                        'AADSTS70008: The refresh token has expired.',
-                })
+            const answer = () => {
+                if (!this.refreshTokens.delete(form.get('refresh_token'))) {
+                    return json(400, {
+                        error: 'invalid_grant',
+                        error_description:
+                            'AADSTS70008: The refresh token has expired.',
+                    })
+                }
+                return json(200, this.issueTokens())
             }
-            return json(200, this.issueTokens())
+            if (this.refreshGate) {
+                this.refreshGate.arrived()
+                return this.refreshGate.open.then(answer)
+            }
+            return answer()
         }
         if (grant === 'authorization_code') {
             const challenge = this.codes.get(form.get('code'))

@@ -175,6 +175,68 @@ describe('Auth.accessToken', () => {
     })
 })
 
+// Each process has its own Auth and TokenStore; only the file is shared.
+describe('renewal across processes', () => {
+    const other = () => new TokenStore(store.path)
+
+    test('a logout during a renewal is not undone by it', async () => {
+        await store.write(record({ expires_at: 0 }))
+        const hold = mock.holdRefreshes()
+        const renewal = new Auth(store).accessToken()
+        await hold.arrived
+        const logout = other().remove()
+        hold.release()
+        await renewal
+        assert.equal(await logout, true)
+        assert.equal(FS.existsSync(store.path), false)
+        await assert.rejects(new Auth(store).accessToken(), {
+            code: 'ENOENT',
+        })
+    })
+
+    test('a login during a renewal is not replaced by it', async () => {
+        await store.write(record({ expires_at: 0 }))
+        const hold = mock.holdRefreshes()
+        const renewal = new Auth(store).accessToken()
+        await hold.arrived
+        const newer = record({ client_id: 'other-account' })
+        const login = other().write(newer)
+        hold.release()
+        await renewal
+        await login
+        assert.deepEqual(await store.read(), newer)
+    })
+
+    test('a renewal started after a logout reports not signed in', async () => {
+        const r = record({ expires_at: 0 })
+        await store.write(r)
+        await other().remove()
+        await assert.rejects(new Auth(store).refresh(r), { code: 'ENOENT' })
+        assert.equal(FS.existsSync(store.path), false)
+        assert.deepEqual(mock.tokenRequests, [])
+    })
+
+    test('a renewal another process already made is reused', async () => {
+        const r = record({ expires_at: 0 })
+        await store.write(r)
+        const renewed = await new Auth(other()).accessToken()
+        mock.tokenRequests.length = 0
+        // This process still holds the expired record it read earlier.
+        const token = (await new Auth(store).refresh(r)).access_token
+        assert.equal(token, renewed)
+        assert.deepEqual(mock.tokenRequests, [])
+    })
+
+    test('a lock left by a process that died is taken over', async () => {
+        await store.write(record())
+        FS.writeFileSync(store.lockPath, '99999')
+        const old = new Date(Date.now() - 10 * 60 * 1000)
+        FS.utimesSync(store.lockPath, old, old)
+        assert.equal(await other().remove(), true)
+        assert.equal(FS.existsSync(store.lockPath), false)
+    })
+})
+
 describe('browser sign-in', () => {
     test('PKCE pair: the challenge is the SHA-256 of the verifier', () => {
         const { verifier, challenge } = pkcePair()
