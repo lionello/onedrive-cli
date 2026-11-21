@@ -101,14 +101,49 @@ function debugPrint(...data) {
     }
 }
 
+// The first error writing to stdout. Usually EPIPE: the reader went away
+// (onedrive cat big.log | head, or onedrive rm ... | head -1). Recording it
+// here means it can never crash the process. Only cat stops for it (see
+// print() and cat()); every other command carries on, because a mutating
+// command is better finished than cut off halfway, and its exit status still
+// says whether its own work succeeded. Any other write error (a full disk
+// behind a redirect, say) means output was lost, so the exit status is 1.
+let stdoutError
+process.stdout.on('error', err => {
+    if (stdoutError) {
+        return
+    }
+    stdoutError = err
+    if (err.code !== 'EPIPE') {
+        console.error(Colors.red('Cannot write output: ' + err.message))
+        process.exitCode = 1
+    }
+})
+
 // Write to stdout, and when it is backed up (write() returns false) wait for
 // 'drain' before the caller produces more, so output never piles up in
-// memory ahead of a slow reader (#70).
+// memory ahead of a slow reader (#70). Rejects with the stdout error once
+// stdout has failed, since then 'drain' never comes.
 function print(data) {
-    if (process.stdout.write(data)) {
-        return Promise.resolve()
-    }
-    return new Promise(resolve => process.stdout.once('drain', resolve))
+    return new Promise((resolve, reject) => {
+        if (stdoutError) {
+            return reject(stdoutError)
+        }
+        if (process.stdout.write(data)) {
+            return resolve()
+        }
+        const done = err => {
+            process.stdout.off('drain', done)
+            process.stdout.off('error', done)
+            if (err) {
+                reject(err)
+            } else {
+                resolve()
+            }
+        }
+        process.stdout.on('drain', done)
+        process.stdout.on('error', done)
+    })
 }
 
 function humanize(num) {
@@ -718,9 +753,20 @@ async function cat1(remote) {
     if (process.stdout.isTTY) {
         console.warn(Colors.yellow('GET'), decodeURIComponent(url))
     }
-    const resp = await checkResponse(await send(url))
+    const download = new AbortController()
+    const resp = await checkResponse(
+        await send(url, { signal: download.signal })
+    )
     for await (const chunk of resp.body) {
-        await print(chunk)
+        try {
+            await print(chunk)
+        } catch (err) {
+            // stdout is gone: drop the download rather than leave its socket
+            // open. node-fetch reports the abort as an 'error' on the body.
+            resp.body.on('error', () => {})
+            download.abort()
+            throw err
+        }
     }
 }
 
@@ -728,8 +774,19 @@ async function cat(args) {
     if (args.length < 1) {
         console.error('usage: cat file ...')
     } else {
-        for (const cur of args) {
-            await cat1(cur)
+        try {
+            for (const cur of args) {
+                await cat1(cur)
+            }
+        } catch (err) {
+            // When the reader stops early (onedrive cat big.log | head), the
+            // output simply ends there, as with cat(1), and the remaining
+            // files are not fetched. Any other stdout error was already
+            // reported, with the exit status set, by the stdout 'error'
+            // listener.
+            if (err !== stdoutError) {
+                throw err
+            }
         }
     }
 }
@@ -1804,15 +1861,6 @@ async function main(argv) {
             )
     }
 }
-
-// A reader that stops early (onedrive cat big.log | head) closes the pipe;
-// that ends the output, it isn't an error.
-process.stdout.on('error', err => {
-    if (err.code === 'EPIPE') {
-        process.exit(0)
-    }
-    throw err
-})
 
 main(process.argv).then(
     result => {
