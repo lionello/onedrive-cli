@@ -81,6 +81,51 @@ describe('upload sessions (#33)', () => {
         assert.equal(cli.mock.content.has('big.bin'), false)
     })
 
+    test('a lost answer to the final chunk is checked against the destination', async () => {
+        const data = bigFile('big.bin')
+        // The file is committed, the answer is lost and the finished session
+        // is gone: the item at the destination must be recognised as ours.
+        cli.mock.loseFinalChunkResponse = 1
+        const { code, stdout, stderr } = await cli.run(
+            'cp',
+            './big.bin',
+            ':/big.bin'
+        )
+        assert.equal(code, 0, stderr)
+        assert.match(stdout, /big\.bin -> \/me\/drive\/root:\/big\.bin:/)
+        assert.ok(cli.mock.content.get('big.bin').equals(data))
+        assert.ok(
+            cli.mock.requests.includes('GET /v1.0/me/drive/root:/big.bin:')
+        )
+    })
+
+    test('after a lost final answer, a different file there is left alone', async () => {
+        const data = bigFile('big.bin')
+        // Someone else's file of the same size lands there first.
+        const other = Buffer.alloc(data.length, 7)
+        cli.mock.onFinalChunk = path =>
+            cli.mock.addFile(path, other, new Date().toISOString())
+        cli.mock.loseFinalChunkResponse = 1
+        const { code, stderr } = await cli.run('cp', './big.bin', ':/big.bin')
+        assert.equal(code, 1)
+        assert.match(stderr, /Upload outcome unknown/)
+        assert.match(stderr, /does not match the local file/)
+        assert.ok(cli.mock.content.get('big.bin').equals(other))
+        assert.ok(FS.existsSync(cli.local('big.bin')))
+    })
+
+    test('after a lost final answer, an older identical file is not claimed', async () => {
+        const data = bigFile('big.bin')
+        // E.g. a copy moved into place: same bytes, but not this upload.
+        cli.mock.onFinalChunk = path =>
+            cli.mock.addFile(path, data, '2000-01-01T00:00:00Z')
+        cli.mock.loseFinalChunkResponse = 1
+        const { code, stderr } = await cli.run('mv', './big.bin', ':/big.bin')
+        assert.equal(code, 1)
+        assert.match(stderr, /modified before this upload started/)
+        assert.ok(FS.existsSync(cli.local('big.bin')))
+    })
+
     test('a large upload never overwrites an existing file', async () => {
         bigFile('hello.txt')
         const { code, stderr } = await cli.run('cp', './hello.txt', ':/')

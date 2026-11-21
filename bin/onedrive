@@ -437,6 +437,59 @@ function nextExpectedOffset(session, fallback) {
     return ranges && ranges.length ? parseInt(ranges[0], 10) : fallback
 }
 
+// Server timestamps are compared with the local clock; allow this much skew.
+const CLOCK_SKEW = 5 * 60 * 1000
+
+/*
+The final chunk went out but its answer was lost, and the session is gone:
+the service may or may not have committed the file. Only the destination can
+tell. Accept it only when it is demonstrably this upload -- a file of the
+same size and content hash, modified since the session started. Anything else
+is reported, never deleted or overwritten: it may be someone else's file.
+*/
+async function reconcileUpload(from, target, size, started) {
+    const unknown = (why, cause) =>
+        Error(
+            'Upload outcome unknown: the final chunk was not acknowledged and ' +
+                decodeURIComponent(target) +
+                ' ' +
+                why +
+                '; it was left untouched',
+            { cause }
+        )
+    let item
+    try {
+        item = await call(target)
+    } catch (err) {
+        if (err.statusCode === 404) {
+            throw Error(
+                'Upload failed: the final chunk was not acknowledged and ' +
+                    decodeURIComponent(target) +
+                    ' does not exist',
+                { cause: err }
+            )
+        }
+        throw unknown('could not be checked (' + err.message + ')', err)
+    }
+    const hashes = (item.file && item.file.hashes) || {}
+    if (!item.file || item.size !== size) {
+        throw unknown('does not match the local file')
+    }
+    const modified = Date.parse(item.lastModifiedDateTime)
+    if (modified < started - CLOCK_SKEW) {
+        throw unknown('was last modified before this upload started')
+    }
+    if (!hashes.quickXorHash && !hashes.sha1Hash) {
+        throw unknown('has no content hash to compare with')
+    }
+    try {
+        await verifyUploadFile(from, item, target)
+    } catch (err) {
+        throw unknown('does not match the local file', err)
+    }
+    return item
+}
+
 /*
 POST /me/drive/root:/{path}:/createUploadSession
 PUT  {uploadUrl}   Content-Range: bytes {start}-{end}/{size}
@@ -444,9 +497,11 @@ The upload URL is pre-authenticated: it must be called without the
 Authorization header. Each chunk is answered with 202 and the ranges still
 expected, the last one with the new item. After a failed chunk the session is
 asked where to resume, so nothing is sent twice and an interrupted chunk
-doesn't restart the file.
+doesn't restart the file. If the session is gone after an unanswered final
+chunk, the destination is checked instead (reconcileUpload).
 */
 async function uploadLarge(from, target, size, conflictBehavior) {
+    const started = Date.now()
     const session = await call(target + '/createUploadSession', 'POST', {
         item: { '@microsoft.graph.conflictBehavior': conflictBehavior },
     })
@@ -454,6 +509,8 @@ async function uploadLarge(from, target, size, conflictBehavior) {
     const file = await FS.open(from, 'r')
     try {
         let offset = 0
+        // Set once the final chunk has gone out without a clear answer.
+        let finalUnanswered = false
         for (let failures = 0; ; ) {
             const length = Math.min(UPLOAD_CHUNK, size - offset)
             const chunk = Buffer.alloc(length)
@@ -496,12 +553,21 @@ async function uploadLarge(from, target, size, conflictBehavior) {
             if (resp && resp.status < 500 && resp.status !== 416) {
                 await checkResponse(resp) // e.g. 409 name conflict: throws
             }
+            if (offset + length === size) {
+                finalUnanswered = true
+            }
             if (++failures >= UPLOAD_ATTEMPTS) {
                 throw Error('Upload failed after ' + failures + ' attempts')
             }
-            const status = await checkResponse(
-                await fetchRetry(uploadUrl, { agent })
-            )
+            const statusResp = await fetchRetry(uploadUrl, { agent })
+            if (
+                finalUnanswered &&
+                (statusResp.status === 404 || statusResp.status === 410)
+            ) {
+                // A completed session is no longer available.
+                return await reconcileUpload(from, target, size, started)
+            }
+            const status = await checkResponse(statusResp)
             offset = nextExpectedOffset(await status.json(), offset)
         }
     } catch (err) {
