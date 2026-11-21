@@ -403,11 +403,20 @@ function verifyUpload(data, item, target) {
     }
 }
 
-// Whether a local file already has a remote item's content, judged by the
-// hash the item reports (quickXorHash, or sha1Hash where that is the only
-// one). The local file is streamed, never read whole. No hash: assume not.
+// Whether a local file already has a remote item's content, judged by size
+// and the hash the item reports (quickXorHash, or sha1Hash where that is the
+// only one). The local file is streamed, never read whole. No hash: assume
+// not. This is a fast check, not proof: QuickXorHash is not collision
+// resistant, so it may only ever decide to *skip* work (cp), never to delete
+// anything (mv uses sameBytes).
 async function sameContent(local, item) {
-    const hashes = (item && item.file && item.file.hashes) || {}
+    if (!item || !item.file) {
+        return false
+    }
+    if ((await FS.stat(local)).size !== item.size) {
+        return false
+    }
+    const hashes = item.file.hashes || {}
     if (hashes.quickXorHash) {
         return (await quickXorHashFile(local)) === hashes.quickXorHash
     }
@@ -421,6 +430,41 @@ async function sameContent(local, item) {
         )
     }
     return false
+}
+
+// Whether a local file has exactly the bytes of a remote file. The remote
+// content is streamed and compared chunk by chunk against the local file, so
+// neither is held in memory whole. Used before mv deletes a source.
+async function sameBytes(local, remote) {
+    const resp = await checkResponse(await send(remote + '/content'))
+    const fh = await FS.open(local, 'r')
+    try {
+        let pos = 0
+        for await (const chunk of resp.body) {
+            const buf = Buffer.alloc(chunk.length)
+            const { bytesRead } = await fh.read(buf, 0, chunk.length, pos)
+            if (bytesRead !== chunk.length || !buf.equals(chunk)) {
+                return false
+            }
+            pos += chunk.length
+        }
+        const { bytesRead } = await fh.read(Buffer.alloc(1), 0, 1, pos)
+        return bytesRead === 0
+    } finally {
+        resp.body.destroy()
+        await fh.close()
+    }
+}
+
+// Remove a local mv source, but only if it still looks like the file that was
+// transferred or compared: same size and modification time as `before`. This
+// narrows, but cannot close, the window between that check and the unlink.
+async function unlinkUnchanged(local, before) {
+    const now = await FS.stat(local)
+    if (now.size !== before.size || now.mtimeMs !== before.mtimeMs) {
+        throw Error(local + ' changed during the move; not removed')
+    }
+    await FS.unlink(local)
 }
 
 // The item at a remote path, or undefined if there is none.
@@ -447,12 +491,18 @@ async function upload(op, from, target) {
         target = target + Path.basename(from)
     }
     target = sanitize(target)
-    // Skip the transfer when the target already has this content (#36).
+    const before = await FS.stat(from)
+    // Skip the transfer when the target already has this content (#36). For
+    // cp, size + hash is enough: a false match only skips a copy. mv deletes
+    // the source, so it first compares the actual bytes.
     const existing = await existingItem(target)
-    if (existing && existing.file && (await sameContent(from, existing))) {
+    if (
+        (await sameContent(from, existing)) &&
+        (op !== MOVE || (await sameBytes(from, target)))
+    ) {
         console.log(from, '==', target, '(unchanged)')
         if (op === MOVE) {
-            await FS.unlink(from)
+            await unlinkUnchanged(from, before)
         }
         return
     }
@@ -468,7 +518,7 @@ async function upload(op, from, target) {
     try {
         if (op === MOVE) {
             console.log(from, '=>', target, result.id)
-            await FS.unlink(from)
+            await unlinkUnchanged(from, before)
         } else {
             console.log(from, '->', target, result.id)
         }
@@ -534,6 +584,19 @@ async function download(op, from, target) {
         target = target + Path.basename(from)
     }
     const remote = sanitize(from)
+    if (op === MOVE) {
+        // No hash shortcut for mv: always download, then delete the source
+        // only if it is still the version that was read (If-Match on its
+        // eTag), so a change made meanwhile makes the delete fail.
+        const item = await call(remote)
+        if (!item.eTag) {
+            throw Error(from + ' has no eTag; not moving it')
+        }
+        const data = await getContent(remote + '/content')
+        await FS.writeFile(target, data)
+        console.log(from, '=>', target)
+        return rmItem(from, item.eTag)
+    }
     // Skip the transfer when the local file already has this content (#36).
     // Only an existing local file costs the extra metadata request.
     const local = await FS.stat(target).catch(() => undefined)
@@ -543,16 +606,11 @@ async function download(op, from, target) {
         (await sameContent(target, await call(remote)))
     ) {
         console.log(from, '==', target, '(unchanged)')
-        return op === MOVE ? rmItem(from) : undefined
+        return
     }
     const data = await getContent(remote + '/content')
     await FS.writeFile(target, data)
-    if (op === MOVE) {
-        console.log(from, '=>', target)
-        return rmItem(from)
-    } else {
-        console.log(from, '->', target)
-    }
+    console.log(from, '->', target)
 }
 
 /*
@@ -677,11 +735,11 @@ async function cp(args) {
 
 // DELETE returns 204 No Content on success, so don't go through call()
 // (which would try to parse a JSON body that isn't there).
-async function del(url) {
+async function del(url, headers = {}) {
     if (process.stdout.isTTY) {
         console.warn(Colors.yellow('DELETE'), decodeURIComponent(url))
     }
-    const resp = await send(url, { method: 'DELETE' })
+    const resp = await send(url, { method: 'DELETE', headers })
     await checkResponse(resp)
 }
 
@@ -689,9 +747,10 @@ async function del(url) {
 DELETE /me/drive/root:/{path}:
 Returns 204 No Content on success.
 Supports files and folders (recursive delete).
+With If-Match: {eTag}, answers 412 and deletes nothing if the item changed.
 */
-function rmItem(remote) {
-    return del(sanitize(remote))
+function rmItem(remote, eTag) {
+    return del(sanitize(remote), eTag ? { 'If-Match': eTag } : {})
 }
 
 async function rm(args) {

@@ -26,6 +26,7 @@ class MockGraph {
         this.requests = [] // "METHOD /path" of every request, for assertions
         this.tokenRequests = [] // grant_type of every token request
         this.corruptUploadHash = false
+        this.afterDownload = null // (path) => void, runs once a download is served
         this.hashKind = 'quickXorHash' // or 'sha1Hash', as on older items
         this.nextId = 1
         this.items = new Map() // path ('' = root) -> item
@@ -65,6 +66,8 @@ class MockGraph {
         const parentPath = parts.join('/')
         const result = {
             id: entry.id,
+            // Every addFile makes a new entry, so a changed file has a new eTag.
+            eTag: '"{' + entry.id + '},1"',
             name,
             lastModifiedDateTime: '2026-01-02T03:04:05Z',
             createdBy: { user: { displayName: 'Test User' } },
@@ -318,6 +321,15 @@ class MockGraph {
             if (!this.items.has(path)) {
                 return notFound()
             }
+            const ifMatch = req.headers['if-match']
+            if (ifMatch && ifMatch !== this.item(path).eTag) {
+                return json(412, {
+                    error: {
+                        code: 'preconditionFailed',
+                        message: 'The resource has changed',
+                    },
+                })
+            }
             for (const p of [...this.items.keys()]) {
                 if (p === path || p.startsWith(path + '/')) {
                     this.items.delete(p)
@@ -426,6 +438,9 @@ class MockGraph {
                 .end(data.subarray(start, end + 1))
         }
         res.writeHead(200).end(data)
+        if (this.afterDownload) {
+            this.afterDownload(path)
+        }
     }
 }
 

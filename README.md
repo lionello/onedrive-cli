@@ -246,7 +246,7 @@ so this stays a pointer rather than a second source of truth:
 
 ## DONE
 
--   `cp`/`mv` skip the transfer when the content already matches, by QuickXorHash or SHA-1 ([#36](https://github.com/lionello/onedrive-cli/issues/36))
+-   `cp` skips the transfer when size and QuickXorHash (or SHA-1) already match — a fast check, not proof of identical content; `mv` deletes a source only after a byte-for-byte compare or a fresh transfer, and a remote source only if unchanged (`If-Match`) ([#36](https://github.com/lionello/onedrive-cli/issues/36))
 -   Microsoft Graph, so work and school accounts work too, with a sign-in that renews itself ([#8](https://github.com/lionello/onedrive-cli/issues/8), [#4](https://github.com/lionello/onedrive-cli/issues/4))
 -   Read-only [MCP](https://modelcontextprotocol.io) server (`onedrive mcp`)
 -   Photo albums via bundles (`onedrive album`)
