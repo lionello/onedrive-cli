@@ -12,6 +12,7 @@ const {
     SCOPES,
     TokenStore,
     isConsentError,
+    loopbackUnreachable,
     pkcePair,
     resolveSettings,
     startBrowserLogin,
@@ -323,6 +324,33 @@ describe('device code sign-in', () => {
         const login = await startDeviceLogin(store)
         login.cancel()
         await assert.rejects(login.wait, { code: 'cancelled' })
+    })
+})
+
+describe('loopbackUnreachable', () => {
+    const none = () => false
+    test('a local terminal can use the browser', () => {
+        assert.equal(loopbackUnreachable({}, none), false)
+    })
+    test('SSH sessions and containers use a device code', () => {
+        assert.equal(
+            loopbackUnreachable({ SSH_CONNECTION: '1 2 3 4' }, none),
+            true
+        )
+        assert.equal(loopbackUnreachable({ SSH_TTY: '/dev/pts/0' }, none), true)
+        assert.equal(loopbackUnreachable({ CODESPACES: 'true' }, none), true)
+        assert.equal(
+            loopbackUnreachable({ REMOTE_CONTAINERS: 'true' }, none),
+            true
+        )
+        assert.equal(
+            loopbackUnreachable({}, p => p === '/.dockerenv'),
+            true
+        )
+        assert.equal(
+            loopbackUnreachable({}, p => p === '/run/.containerenv'),
+            true
+        )
     })
 })
 

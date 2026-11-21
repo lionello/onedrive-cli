@@ -52,7 +52,10 @@ until you run `onedrive logout`. Add `-r` for read-only access.
     back to the CLI.
 -   `onedrive login --device` - prints a short code to enter at
     microsoft.com/devicelogin on any device: for SSH sessions, containers and
-    agents. Used automatically when there is no terminal.
+    agents. Used automatically when there is no terminal, in an SSH session and
+    in a container (e.g. a dev container), where the browser usually cannot
+    reach the CLI. `onedrive login --browser` uses the browser anyway, e.g. when
+    the port is forwarded.
 -   `onedrive login --tenant contoso.com` - accepts accounts of that
     organization only (a domain or tenant ID). The default, `common`, accepts
     any account.

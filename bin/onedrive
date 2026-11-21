@@ -12,6 +12,7 @@ const {
     Auth,
     TokenStore,
     isConsentError,
+    loopbackUnreachable,
     startBrowserLogin,
     startDeviceLogin,
 } = require('../lib/auth')
@@ -798,6 +799,9 @@ function parseLoginArgs(args) {
             case '--device':
                 options.device = true
                 break
+            case '--browser':
+                options.browser = true
+                break
             case '--tenant':
             case '--client-id': {
                 const value = args[++i]
@@ -835,7 +839,13 @@ async function login(args) {
             (await tokenStore.write(extractToken(token)))
         )
     }
-    if (options.device || !isInteractive()) {
+    // A browser in another machine or outside a container cannot reach the
+    // loopback redirect, so a device code is the default there; --browser
+    // overrides that, e.g. when the port is forwarded.
+    const useDevice = options.browser
+        ? false
+        : options.device || !isInteractive() || loopbackUnreachable()
+    if (useDevice) {
         const device = await startDeviceLogin(tokenStore, options)
         console.log(
             '\n' +
@@ -1583,9 +1593,9 @@ async function mcp() {
             inputSchema: {
                 device: z
                     .boolean()
-                    .default(false)
+                    .optional()
                     .describe(
-                        'Sign in with a device code instead of a browser on this machine.'
+                        'Sign in with a device code instead of a browser on this machine. Defaults to true in SSH sessions and containers, where a browser usually cannot reach this server.'
                     ),
                 readonly: z
                     .boolean()
@@ -1607,7 +1617,7 @@ async function mcp() {
                 return asJson({ ok: true, message: 'Access token saved.' })
             }
 
-            if (device) {
+            if (device ?? loopbackUnreachable()) {
                 const login = await startDeviceLogin(tokenStore, { readonly })
                 // Polling continues in the background and saves the token once
                 // the user finishes; every request re-reads the token file.
