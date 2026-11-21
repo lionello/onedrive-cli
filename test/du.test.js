@@ -70,6 +70,43 @@ describe('du', () => {
         ])
     })
 
+    test('a file argument reports its own size, without listing it', async () => {
+        addTree()
+        const { code, stdout } = await cli.run('du', ':/Documents/a.bin')
+        assert.equal(code, 0)
+        assert.deepEqual(lines(stdout), ['3\t:/Documents/a.bin'])
+        assert.ok(!cli.mock.requests.some(r => r.endsWith('/children')))
+    })
+
+    test('a file argument is one line at any depth', async () => {
+        addTree()
+        for (const flags of [['-d', '0'], ['-d', '2'], ['-s'], ['-a']]) {
+            const { stdout } = await cli.run(
+                'du',
+                ...flags,
+                ':/Documents/Old/b.bin'
+            )
+            assert.deepEqual(lines(stdout), ['3\t:/Documents/Old/b.bin'])
+        }
+        assert.ok(!cli.mock.requests.some(r => r.endsWith('/children')))
+    })
+
+    test('file and folder arguments mix, with a total', async () => {
+        addTree()
+        const { stdout } = await cli.run(
+            'du',
+            '-c',
+            ':/Documents/a.bin',
+            ':/Documents'
+        )
+        assert.deepEqual(lines(stdout), [
+            '3\t:/Documents/a.bin',
+            '3\t:/Documents/Old',
+            '6\t:/Documents',
+            '9\ttotal',
+        ])
+    })
+
     test('the default path is the root', async () => {
         const { stdout } = await cli.run('du', '-d0')
         assert.deepEqual(lines(stdout), ['1\t:/'])

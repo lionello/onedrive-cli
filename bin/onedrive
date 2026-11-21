@@ -1095,7 +1095,19 @@ async function du(args) {
     }
     let total = 0
     for (const path of paths) {
-        total += await du1(path, depth, options)
+        // The root is always a folder; any other argument may be a file,
+        // which has no children and is reported with its own size.
+        if (sanitize(path) === DRIVE + '/root') {
+            total += await du1(path, depth, options)
+            continue
+        }
+        const info = await call(sanitize(path))
+        if (info.folder) {
+            total += await du1(path, depth, options, info.size)
+        } else {
+            console.log(duSize(info.size, options) + '\t' + path)
+            total += info.size
+        }
     }
     if (options.total) {
         console.log(duSize(total, options) + '\ttotal')
