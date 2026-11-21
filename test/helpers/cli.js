@@ -83,6 +83,7 @@ function useCli() {
             }
         }
         mock.corruptUploadHash = false
+        mock.afterDownload = null
         await ctx.signIn()
     })
 
