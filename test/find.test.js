@@ -28,17 +28,50 @@ async function find(...args) {
 }
 
 describe('find predicates (#39)', () => {
-    test('-maxdepth stops descending, and saves the requests', async () => {
+    const graphRequests = () =>
+        cli.mock.requests.filter(r => r.startsWith('GET /v1.0/'))
+
+    test('the starting point is depth 0, printed when it matches', async () => {
+        addTree()
+        const all = await find()
+        assert.ok(all.includes(':/'))
+        assert.equal(all.length, 10)
+        assert.deepEqual(
+            (await cli.run('find', ':/Documents', '-type', 'd')).stdout
+                .trim()
+                .split('\n')
+                .sort(),
+            [':/Documents', ':/Documents/2024', ':/Documents/2024/Deep']
+        )
+        // A file as the starting point is just tested, never listed
+        assert.deepEqual(
+            (await cli.run('find', ':/hello.txt')).stdout.trim(),
+            ':/hello.txt'
+        )
+    })
+
+    test('-maxdepth 0 tests the starting point and fetches no children', async () => {
+        addTree()
+        assert.deepEqual(await find('-maxdepth', '0'), [':/'])
+        assert.deepEqual(await find('-maxdepth', '0', '-type', 'f'), [])
+        assert.deepEqual(graphRequests(), [
+            'GET /v1.0/me/drive/root',
+            'GET /v1.0/me/drive/root',
+        ])
+    })
+
+    test('-maxdepth 1 lists the children and fetches no grandchildren', async () => {
         addTree()
         assert.deepEqual(await find('-maxdepth', '1'), [
+            ':/',
             ':/Documents',
             ':/My Files',
             ':/hello.txt',
         ])
-        assert.deepEqual(
-            cli.mock.requests.filter(r => r.startsWith('GET /v1.0/')),
-            ['GET /v1.0/me/drive/root/children']
-        )
+        assert.deepEqual(graphRequests(), [
+            'GET /v1.0/me/drive/root',
+            'GET /v1.0/me/drive/root/children',
+        ])
         assert.equal((await find('-maxdepth', '3', '-type', 'f')).length, 4)
     })
 
@@ -47,6 +80,12 @@ describe('find predicates (#39)', () => {
         assert.deepEqual(await find('-mindepth', '4'), [
             ':/Documents/2024/Deep/new.txt',
         ])
+        assert.deepEqual(await find('-mindepth', '1', '-maxdepth', '1'), [
+            ':/Documents',
+            ':/My Files',
+            ':/hello.txt',
+        ])
+        assert.deepEqual(await find('-mindepth', '1', '-maxdepth', '0'), [])
     })
 
     test('-size with units, rounded up like find(1)', async () => {
