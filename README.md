@@ -130,7 +130,7 @@ Run `onedrive help` (or `-h`/`--help`) for this list at any time, and
 -   `ls` - list the contents of a folder
 -   `mcp` - run a read-only [MCP](https://modelcontextprotocol.io) server over stdio
 -   `mkdir` - create a remote folder
--   `mv` - move a local file to OneDrive or vice-versa (`-f`, `-n`, `-i` as for `cp`)
+-   `mv` - move a file to, from, or within OneDrive (`-f`, `-n`, `-i` as for `cp`)
 -   `rm` - delete a file or folder from OneDrive
 -   `sendmail` - send an invitation email for editing to recipients
 -   `stat` - dump all information for particular file(s)
