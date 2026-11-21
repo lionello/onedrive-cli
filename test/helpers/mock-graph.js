@@ -27,6 +27,7 @@ class MockGraph {
         this.tokenRequests = [] // grant_type of every token request
         this.ranges = [] // { start, length } of every ranged download
         this.corruptUploadHash = false
+        this.ignoreRange = false // answer Range requests with 200 + whole file
         this.nextId = 1
         this.items = new Map() // path ('' = root) -> item
         this.content = new Map() // path -> Buffer
@@ -400,7 +401,7 @@ class MockGraph {
             return res.writeHead(404).end()
         }
         const range = /^bytes=(\d+)-(\d+)$/.exec(req.headers.range || '')
-        if (range) {
+        if (range && !this.ignoreRange) {
             const start = Number(range[1])
             if (start >= data.length) {
                 return res

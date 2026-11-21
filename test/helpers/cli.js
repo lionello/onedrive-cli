@@ -25,6 +25,7 @@ function useCli() {
                 {
                     cwd: ctx.cwd,
                     encoding: 'buffer',
+                    maxBuffer: 16 * 1024 * 1024,
                     env: {
                         PATH: process.env.PATH,
                         XDG_STATE_HOME: ctx.home,
@@ -83,6 +84,7 @@ function useCli() {
             }
         }
         mock.corruptUploadHash = false
+        mock.ignoreRange = false
         await ctx.signIn()
     })
 
