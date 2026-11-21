@@ -25,4 +25,6 @@ jobs:
 
       - run: npm run lint
 
-      - run: npx prettier --check bin/onedrive
+      - run: npx prettier --check bin/onedrive lib scripts test
+
+      - run: npm test
