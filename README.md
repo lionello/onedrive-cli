@@ -63,6 +63,16 @@ until you run `onedrive logout`. Add `-r` for read-only access.
 `login <access_token>` still saves a token obtained elsewhere. Such a token
 cannot be renewed and stops working after about an hour.
 
+### Upgrading from 1.x
+
+Version 2 talks to Microsoft Graph instead of the retired OneDrive API, so a
+token saved by 1.x no longer works. After upgrading, run `onedrive login` once;
+until then commands say that the saved token was issued for the old API.
+
+Signing in needs an application (client) ID. If your installed version has no
+built-in one, `login` asks for `--client-id` (or `ONEDRIVE_CLIENT_ID`): register
+your own app as described below, then sign in with it.
+
 ### Your own app registration
 
 Some organizations only let their users sign in to apps an administrator has
