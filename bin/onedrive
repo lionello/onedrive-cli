@@ -1065,28 +1065,44 @@ function isEmpty(info) {
     return info.folder ? info.folder.childCount === 0 : info.size === 0
 }
 
-async function find_paged(cont, expression, depth = 1) {
+// Like find(1), the starting point is depth 0, its children depth 1, and so
+// on. An item is printed when it is deep enough and passes every test.
+function findMatches(info, expression, depth) {
+    return (
+        expression.dirOnly !== !info.folder &&
+        (!expression.regex || expression.regex.test(info.name)) &&
+        depth >= (expression.mindepth || 0) &&
+        expression.tests.every(test => test(info))
+    )
+}
+
+function findPrint(file, expression) {
+    if (expression.print0) {
+        process.stdout.write(file)
+        process.stdout.write('\0')
+    } else {
+        console.log(file)
+    }
+}
+
+// Whether -maxdepth lets the walk look inside a folder at this depth.
+function findDescends(expression, depth) {
+    return expression.maxdepth === undefined || depth < expression.maxdepth
+}
+
+async function find_paged(cont, expression, depth) {
     if (cont === undefined) {
         return
     }
     const result = await call(cont)
     result.value
-        .filter(info => expression.dirOnly !== !info.folder)
-        .filter(info => !expression.regex || expression.regex.test(info.name))
-        .filter(() => depth >= (expression.mindepth || 0))
-        .filter(info => expression.tests.every(test => test(info)))
+        .filter(info => findMatches(info, expression, depth))
         .map(absolute)
-        .forEach(file => {
-            if (expression.print0) {
-                process.stdout.write(file)
-                process.stdout.write('\0')
-            } else {
-                console.log(file)
-            }
-        })
+        .forEach(file => findPrint(file, expression))
     await find_paged(result['@odata.nextLink'], expression, depth)
-    // Recurse into subfolders, unless -maxdepth says this is deep enough
-    if (expression.maxdepth !== undefined && depth >= expression.maxdepth) {
+    // Recurse into subfolders, unless -maxdepth says this is deep enough;
+    // checked before fetching, so no request goes past the limit.
+    if (!findDescends(expression, depth)) {
         return
     }
     const folders = result.value.filter(info => info.folder)
@@ -1096,6 +1112,22 @@ async function find_paged(cont, expression, depth = 1) {
             expression,
             depth + 1
         )
+    }
+}
+
+// The starting point itself, at depth 0; its children only when -maxdepth
+// allows depth 1.
+async function find1(path, expression) {
+    const remote = sanitize(path)
+    const info = await call(remote)
+    // Graph names the root "root"; match and print it as '/' and ':/', the
+    // way find(1) treats a starting point of '/'.
+    const isRoot = remote === DRIVE + '/root'
+    if (findMatches(isRoot ? { ...info, name: '/' } : info, expression, 0)) {
+        findPrint(isRoot ? ':/' : absolute(info), expression)
+    }
+    if (info.folder && findDescends(expression, 0)) {
+        await find_paged(remote + '/children', expression, 1)
     }
 }
 
@@ -1170,7 +1202,7 @@ async function find(args) {
             }
         }
         for (const folder of args) {
-            await find_paged(sanitize(folder) + '/children', expression)
+            await find1(folder, expression)
         }
     }
 }
