@@ -121,9 +121,46 @@ async function saveToken(token) {
 // the new photos stack) or throttles with 429, and an immediate retry
 // typically succeeds. Honor Retry-After when the server sends one. Bodies are
 // always buffered strings/Buffers here (never streams), so re-sending is safe.
+//
+// A thrown network error (ECONNRESET, ETIMEDOUT, ...) is retried the same way,
+// but only for methods that are safe to replay: a reset after the server has
+// committed a POST or PUT could otherwise duplicate the write.
+const RETRY_ERROR_CODES = new Set([
+    'ECONNRESET',
+    'ECONNREFUSED',
+    'ETIMEDOUT',
+    'EPIPE',
+])
+const REPLAY_SAFE_METHODS = new Set(['GET', 'HEAD', 'DELETE'])
+
+function isRetryableNetworkError(err, options) {
+    const method = ((options && options.method) || 'GET').toUpperCase()
+    return (
+        REPLAY_SAFE_METHODS.has(method) &&
+        err &&
+        err.name === 'FetchError' &&
+        RETRY_ERROR_CODES.has(err.code || (err.errno && String(err.errno)))
+    )
+}
+
 async function fetchRetry(url, options, attempts = 3) {
     for (let attempt = 1; ; ++attempt) {
-        const resp = await fetch(url, options)
+        let resp
+        try {
+            resp = await fetch(url, options)
+        } catch (err) {
+            if (attempt >= attempts || !isRetryableNetworkError(err, options)) {
+                throw err
+            }
+            if (process.stdout.isTTY) {
+                console.warn(
+                    Colors.yellow(err.code),
+                    'retrying in ' + attempt + 's'
+                )
+            }
+            await new Promise(resolve => setTimeout(resolve, attempt * 1000))
+            continue
+        }
         if (
             (resp.status !== 503 && resp.status !== 429) ||
             attempt >= attempts
